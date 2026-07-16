@@ -1,0 +1,29 @@
+[
+  {
+    "id": "synthetic-001",
+    "organisation": "Tideglass Cooperative",
+    "title": "Climate Data Product Engineer",
+    "location": "Remote within Europe",
+    "kind": "job",
+    "summary": "Build geospatial tools that help coastal towns compare adaptation options.",
+    "url": "https://example.invalid/opportunities/climate-data-engineer"
+  },
+  {
+    "id": "synthetic-002",
+    "organisation": "Civic Evidence Lab",
+    "title": "Environmental Investigations Fellow",
+    "location": "London hybrid",
+    "kind": "fellowship",
+    "summary": "A nine-month fellowship pairing data researchers with investigative reporters.",
+    "url": "https://example.invalid/opportunities/investigations-fellow"
+  },
+  {
+    "id": "synthetic-003",
+    "organisation": "AdSpark Metrics",
+    "title": "Senior Attribution Analyst",
+    "location": "Bristol hybrid",
+    "kind": "job",
+    "summary": "Optimise advertising allocation through multi-touch attribution models.",
+    "url": "https://example.invalid/opportunities/attribution-analyst"
+  }
+]

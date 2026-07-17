@@ -1,0 +1,27 @@
+[project]
+name = "lovework-agent"
+version = "0.1.0"
+description = "Personal job discovery agent with LLM-in-the-loop. Part of LoveWork (lovework.be)."
+requires-python = ">=3.13"
+dependencies = [
+    "markdown>=3.6",
+    "openai>=1.30",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+    "firecrawl-py>=1.0",
+    "httpx>=0.27",
+    # Pin pi-agent to a specific version. Upgrade deliberately, with testing.
+    # See LLM_CALLS.md §6.1 for the pinning strategy.
+    "pi-agent==0.1.0",
+    # DSPy for typed prompt signatures (compileable, optimisable).
+    # See dspy_signatures.py.
+    "dspy>=3.0",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
+
+[tool.setuptools]
+py-modules = ["config", "llm_client", "llm_runtime", "tools", "crawler", "matcher", "wiki_store", "history", "job_registry", "agent", "agent_runtime", "main"]
+packages = ["sources"]

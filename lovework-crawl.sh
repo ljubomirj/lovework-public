@@ -18,10 +18,12 @@ AGENT_DIR="$LOVEWORK_ROOT/lovework-agent"
 VENV_PYTHON="$LOVEWORK_ROOT/venv/bin/python3"
 LOCK_FILE="$AGENT_DIR/cache/crawl.lock"
 LOG_DIR="$AGENT_DIR/logs"
-MAIL_TO="LjubomirJosifovski@gmail.com"
 DATE_STR=$(date +"%Y-%m-%d %H:%M")
 TS=$(date +"%Y%m%d-%H%M%S")
 LOG_FILE="$LOG_DIR/$CRAWL_TYPE-$TS.log"
+RUN_ID="$CRAWL_TYPE-$TS-$$"
+RUN_LEDGER="$AGENT_DIR/run_ledger.py"
+NOTIFIER="$AGENT_DIR/notify.py"
 
 # LoveWork always runs inside a Hermes profile.  Hermes may provide
 # HERMES_HOME explicitly; otherwise use the homelab host mapping.  Unknown
@@ -44,6 +46,32 @@ export HERMES_HOME
 HERMES_PROFILE_NAME=$(basename "$HERMES_HOME")
 
 mkdir -p "$LOG_DIR"
+
+log() {
+    printf '%s\n' "$*" | tee -a "$LOG_FILE"
+}
+
+record_start() {
+    "$VENV_PYTHON" "$RUN_LEDGER" start \
+        --run-id "$RUN_ID" --run-type "$CRAWL_TYPE" \
+        --profile "$HERMES_PROFILE_NAME" --hermes-home "$HERMES_HOME" \
+        --log-file "$LOG_FILE" --pid "$$" >> "$LOG_FILE" 2>&1
+}
+
+record_finish() {
+    local STATUS="$1"
+    local EXIT_CODE="$2"
+    local REPORT_FILE="${3:-}"
+    local ERROR_TEXT="${4:-}"
+    local ARGS=(finish --run-id "$RUN_ID" --status "$STATUS" --exit-code "$EXIT_CODE")
+    if [ -n "$REPORT_FILE" ]; then
+        ARGS+=(--report-file "$REPORT_FILE")
+    fi
+    if [ -n "$ERROR_TEXT" ]; then
+        ARGS+=(--error "$ERROR_TEXT")
+    fi
+    "$VENV_PYTHON" "$RUN_LEDGER" "${ARGS[@]}" >> "$LOG_FILE" 2>&1 || true
+}
 
 # --------------- Lock ---------------
 acquire_lock() {
@@ -73,76 +101,78 @@ release_lock() {
     rm -f "$LOCK_FILE"
 }
 
-# --------------- Notification helpers ---------------
-send_email() {
-    local SUBJECT="$1"
-    local BODY="$2"
-    local GAPI_SCRIPT="$HERMES_HOME/skills/productivity/google-workspace/scripts/google_api.py"
-    local VENV_PYTHON="$LOVEWORK_ROOT/venv/bin/python3"
-    if [ -f "$GAPI_SCRIPT" ] && [ -f "$HERMES_HOME/google_token.json" ]; then
-        echo "$BODY" | "$VENV_PYTHON" "$GAPI_SCRIPT" gmail send \
-            --to "$MAIL_TO" --subject "$SUBJECT" 2>/dev/null && \
-            echo "[EMAIL] Sent via Gmail API" && return
-    fi
-    # Fallback: local mail (may bounce if no SMTP relay)
-    echo "$BODY" | /usr/bin/mail -s "$SUBJECT" "$MAIL_TO" 2>/dev/null && \
-        echo "[EMAIL] Sent via local mail" || \
-        echo "[EMAIL] Could not send — Gmail API token may need refresh. Run:"
-    echo "  $GAPI_SCRIPT oauth"
-}
-
 # --------------- Main ---------------
 acquire_lock
+record_start
 
-echo "LoveWork $CRAWL_TYPE sweep — $DATE_STR"
-echo "Hermes profile: $HERMES_PROFILE_NAME ($HERMES_HOME)"
-echo "Log: $LOG_FILE"
-echo "Running..."
+FINALIZED=0
+finish_unexpectedly() {
+    local EXIT_CODE=$?
+    if [ "$FINALIZED" -eq 0 ]; then
+        record_finish "failed" "$EXIT_CODE" "" "wrapper exited before terminal run resolution"
+    fi
+    release_lock
+    trap - EXIT
+    exit "$EXIT_CODE"
+}
+trap finish_unexpectedly EXIT
+
+log "LoveWork $CRAWL_TYPE sweep — $DATE_STR"
+log "Run ID: $RUN_ID"
+log "Hermes profile: $HERMES_PROFILE_NAME ($HERMES_HOME)"
+log "Log: $LOG_FILE"
+log "Running..."
 
 cd "$AGENT_DIR"
 
 if [ "$CRAWL_TYPE" = "full" ]; then
-    $VENV_PYTHON main.py --profile lj --role general --source all --report \
+    set +e
+    "$VENV_PYTHON" main.py --profile lj --role general --source all --report \
         2>&1 | tee -a "$LOG_FILE"
+    CRAWL_EXIT=${PIPESTATUS[0]}
+    set -e
 elif [ "$CRAWL_TYPE" = "incremental" ]; then
-    $VENV_PYTHON incremental_crawl.py \
+    set +e
+    "$VENV_PYTHON" incremental_crawl.py \
         2>&1 | tee -a "$LOG_FILE"
+    CRAWL_EXIT=${PIPESTATUS[0]}
+    set -e
 else
-    echo "Unknown crawl type: $CRAWL_TYPE"
+    log "Unknown crawl type: $CRAWL_TYPE"
     exit 1
 fi
 
-CRAWL_EXIT=${PIPESTATUS[0]}
-
 if [ $CRAWL_EXIT -ne 0 ]; then
-    echo "[CRAWL FAILED] exit code $CRAWL_EXIT"
-    echo "[CRAWL FAILED] exit code $CRAWL_EXIT" >> "$LOG_FILE"
+    log "[CRAWL FAILED] exit code $CRAWL_EXIT"
+    record_finish "failed" "$CRAWL_EXIT" "" "crawl process exited $CRAWL_EXIT"
+    FINALIZED=1
     exit $CRAWL_EXIT
 fi
 
-echo "[CRAWL COMPLETE]" >> "$LOG_FILE"
+log "[CRAWL COMPLETE]"
 
 # Regenerate the manual so dashboard picks up latest stats
-set +e
-$VENV_PYTHON build_manual.py >> "$LOG_FILE" 2>&1
-set -e
-
-# Success — send email summary
-LATEST_REPORT=$(ls -t wiki/reports/*.md 2>/dev/null | head -1)
-if [ -n "$LATEST_REPORT" ]; then
-    SUMMARY=$(head -60 "$LATEST_REPORT" | grep -E "^###|^- |^\*\*|^#|Score|GO|MAYBE" | head -30)
-EMAIL_BODY="LoveWork $CRAWL_TYPE sweep completed at $DATE_STR.
-Hermes profile: $HERMES_PROFILE_NAME ($HERMES_HOME)
-
-Top findings:
-$SUMMARY
-
-Dashboard: http://192.168.1.251:8765/
-Full report: $LATEST_REPORT"
-else
-    EMAIL_BODY="LoveWork $CRAWL_TYPE sweep completed at $DATE_STR.
-No report file found."
+if ! "$VENV_PYTHON" build_manual.py >> "$LOG_FILE" 2>&1; then
+    log "[MANUAL FAILED] build_manual.py"
+    record_finish "failed" 1 "" "build_manual.py failed after successful crawl"
+    FINALIZED=1
+    exit 1
 fi
 
-send_email "LoveWork — $CRAWL_TYPE sweep done ($DATE_STR)" "$EMAIL_BODY"
-echo "[EMAIL] Summary sent to $MAIL_TO"
+# A crawl is only a successful operational run when it yields its report.
+LATEST_REPORT=$(ls -t wiki/reports/*.md 2>/dev/null | head -1)
+if [ -z "$LATEST_REPORT" ]; then
+    log "[REPORT FAILED] No report file found after successful crawl"
+    record_finish "failed" 1 "" "no report file found after successful crawl"
+    FINALIZED=1
+    exit 1
+fi
+
+record_finish "succeeded" 0 "$LATEST_REPORT"
+if "$VENV_PYTHON" "$NOTIFIER" --report "$LATEST_REPORT" --log "$LOG_FILE" --run-id "$RUN_ID" >> "$LOG_FILE" 2>&1; then
+    log "[EMAIL] Gmail API delivery evidenced"
+else
+    log "[EMAIL FAILED] Crawl succeeded; watchdog must reconcile notification failure"
+fi
+
+FINALIZED=1

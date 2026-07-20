@@ -211,6 +211,16 @@ def run_pipeline(
             )
         except Exception as e:
             logger.warning(f"Dataset append failed: {e}")
+        pack_results = []
+        if profile_name.lower() == "lj":
+            try:
+                from application_packs import prepare_go_cases
+
+                pack_results = prepare_go_cases(all_entries, only_new=True)
+                for result in pack_results:
+                    result.entry.case_pack_result = result
+            except Exception as e:
+                logger.warning(f"LoveWork application-pack preparation failed: {e}")
         for entry in all_entries:
             try:
                 wiki.update_org_page(entry)
@@ -220,7 +230,11 @@ def run_pipeline(
             try:
                 role_label = role or "default"
                 profile_label = f"{profile_name.upper()}-{role_label}"
-                wiki.save_report(all_entries, profile_name=profile_label)
+                wiki.save_report(
+                    all_entries,
+                    profile_name=profile_label,
+                    pack_results=pack_results,
+                )
             except Exception as e:
                 logger.warning(f"Wiki report failed: {e}")
         try:

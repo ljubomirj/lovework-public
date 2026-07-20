@@ -359,6 +359,7 @@ class LinkedInRelatedSource:
             location=None,
             score=match.score, decision=match.decision,
             reasoning=match.reasoning, source=self.name,
+            advert_excerpt=description,
             **match_fields(match),
         )
         if record is not None:

@@ -17,7 +17,7 @@ List[WikiEntry]` shape.
 | 4 | **company_pages** | LJ's curated `company_pages.yaml` (per-entry cadence) | web | `company_pages.py` |
 | 5 | **hn_hiring** | "Ask HN: Who is hiring?" monthly thread (Algolia API) | live API | `hn_hiring.py` |
 | 6 | **hn_jobs** | `news.ycombinator.com/jobs` (21-day recency filter) | live HTML | `hn_jobs.py` |
-| 7 | **gmail_lj_jobs** | Gmail `LJ-jobs` label → LinkedIn, JobServe, Lensa Aggregated, Totaljobs, CWJobs, TalentSource, and Rec-London alerts | live API | `gmail_lj_jobs.py` |
+| 7 | **gmail_lj_jobs** | Gmail `LJ-jobs` label → LinkedIn, JobServe, Lensa / Lensa Aggregated, Johnson Jobs, Totaljobs, CWJobs, TalentSource, and Rec-London alerts | live API | `gmail_lj_jobs.py` |
 | 8 | **linkedin_related** | LinkedIn seeds -> related jobs (JSON-LD) | live HTML | `linkedin_related.py` |
 | 9 | **harnham** | LJ Harnham search URLs (`profiles/lj/harnham_searches.yaml`) | web | `harnham.py` |
 
@@ -80,6 +80,10 @@ org page, and assessment-ledger records carry `discovery_url` and
 Supported Gmail lead messages are marked read only after their parser extracts
 at least one raw listing. A recognised alert whose provider has changed its
 template remains unread and logs a warning, preventing silent lead loss.
+
+Lensa and Johnson Jobs are retained as low-SNR, primarily US-oriented discovery
+feeds. Their URLs are provenance, not proof: primary-page enrichment and LJ's
+work-authorisation hard-kills determine whether a lead is real and eligible.
 
 ## Per-source env tunables
 

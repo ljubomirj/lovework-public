@@ -65,6 +65,13 @@ Intern• Remote
 ](https://email.lensa.com/f/a/job-two)
 """
 
+JOHNSONJOBS_BODY = """<html><body>
+<p>New Job Post</p>
+<p>Arc Labs<br>Remote (US)<br>
+<a href="https://johnsonjobs.com/jobs/applied-ai-engineer-123?source=alert">Applied AI Engineer</a></p>
+<a href="https://johnsonjobs.com/unsubscribe?token=abc">Unsubscribe</a>
+</body></html>"""
+
 
 # ── Parser ─────────────────────────────────────────────────────────────────
 
@@ -108,6 +115,8 @@ def test_parse_empty_body():
     ("JobServe Jobs by Email <jobsbyemail@apps.jobserve.com>", "Agentic engineer", "jobserve_alert"),
     ("Candidate Services <candidate.admin@apps.jobserve.com>", "Important information about your job alert", "jobserve_admin"),
     ("Lensa Aggregated <aggregated@lensa.com>", "Jobs you might like", "lensa_alert"),
+    ("Lensa <jobalert@lensa.com>", "New jobs for you", "lensa_alert"),
+    ("JJ Alerts <alerts@johnsonjobs.com>", "New Job Post", "johnsonjobs_alert"),
     ("alerts@tech.jobserve.com", "Your job alert", "jobserve_alert"),
     ("feedback@ashbyhq.com", "Application update", "ats_ashby"),
     ("notifications@lever.co", "Apply now", "ats_lever"),
@@ -253,6 +262,15 @@ def test_parse_lensa_alerts_handles_real_markdown_tracking_cards():
     ]
 
 
+def test_parse_johnsonjobs_alerts_extracts_listing_and_ignores_unsubscribe():
+    assert G.parse_johnsonjobs_alerts(JOHNSONJOBS_BODY) == [{
+        "title": "Applied AI Engineer",
+        "company": "Arc Labs",
+        "location": "Remote (US)",
+        "url": "https://johnsonjobs.com/jobs/applied-ai-engineer-123?source=alert",
+    }]
+
+
 # ── Noise pre-filter ───────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("title, expected_nonfit", [
@@ -380,6 +398,32 @@ def test_source_lensa_alert_dispatches_and_marks_read(monkeypatch):
         "Machine Learning Engineer", "Applied AI Researcher",
     ]
     assert all(entry.url.startswith("https://lensa.com/") for entry in entries)
+    assert any(call[:2] == ("gmail", "modify") for call in calls)
+
+
+def test_source_johnsonjobs_alert_dispatches_and_marks_read(monkeypatch):
+    calls = []
+
+    def fake_gapi(*args):
+        calls.append(args)
+        if args[:2] == ("gmail", "search"):
+            return [{
+                "id": "johnsonjobs-1",
+                "from": "JJ Alerts <alerts@johnsonjobs.com>",
+                "subject": "New Job Post",
+            }]
+        if args[:2] == ("gmail", "get"):
+            return {"body": JOHNSONJOBS_BODY}
+        if args[:2] == ("gmail", "modify"):
+            return {}
+        return None
+
+    monkeypatch.setattr(G, "run_gapi", fake_gapi)
+    entries = G.GmailLjJobsSource(
+        matcher=_FakeMatcher(), registry=_FakeRegistry(), mark_read=True,
+    ).run()
+    assert [entry.title for entry in entries] == ["Applied AI Engineer"]
+    assert entries[0].url.startswith("https://johnsonjobs.com/jobs/")
     assert any(call[:2] == ("gmail", "modify") for call in calls)
 
 

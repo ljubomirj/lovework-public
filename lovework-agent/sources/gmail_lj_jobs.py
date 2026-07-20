@@ -18,7 +18,7 @@ Cron-safe (assumes scheduled runs):
 
 Gmail access reuses the same google_api.py script as history.scan_gmail and lj-jobs-poll.
 Classification + LinkedIn parsing are ported from lj-jobs-poll.py (LJ-work-2026 root).
-TotalJobs, CWJobs, TalentSource, Rec-London, JobServe, and Lensa Aggregated
+TotalJobs, CWJobs, TalentSource, Rec-London, JobServe, Lensa, and Johnson Jobs
 alerts use source-specific parsers below.
 """
 
@@ -89,8 +89,10 @@ def classify_email(msg: dict) -> str:
         return "jobserve_alert"
     if "jobserve.com" in sender and "job alert" in subject:
         return "jobserve_alert"
-    if "aggregated@lensa.com" in sender:
+    if "aggregated@lensa.com" in sender or "jobalert@lensa.com" in sender:
         return "lensa_alert"
+    if "alerts@johnsonjobs.com" in sender:
+        return "johnsonjobs_alert"
     return "other"
 
 
@@ -618,8 +620,11 @@ def _is_jobserve_job_url(url: str) -> bool:
     return bool(re.fullmatch(r'[a-z0-9]{5,12}/?(?:\?.*)?', path))
 
 
-def _clean_email_html(body: str) -> tuple[str, dict[str, str]]:
-    """Convert an email body to text while retaining anchor URLs and titles."""
+def _clean_email_html(
+    body: str,
+    job_url_predicate=_is_jobserve_job_url,
+) -> tuple[str, dict[str, str]]:
+    """Convert an email body to text while retaining selected anchor titles."""
     import html as html_mod
 
     anchor_titles: dict[str, str] = {}
@@ -628,7 +633,7 @@ def _clean_email_html(body: str) -> tuple[str, dict[str, str]]:
         url = html_mod.unescape(match.group(1)).strip()
         title = re.sub(r'<[^>]+>', ' ', match.group(2))
         title = re.sub(r'\s+', ' ', html_mod.unescape(title)).strip()
-        if title and _is_jobserve_job_url(url):
+        if title and job_url_predicate(url):
             anchor_titles[url.rstrip(").,;")] = title
         return f"\n{title}\n{url}\n"
 
@@ -690,6 +695,77 @@ def parse_jobserve_alerts(body: str) -> list[dict]:
             jobs.append({
                 "title": title,
                 "company": company or "JobServe listing",
+                "location": location,
+                "url": url,
+            })
+
+    return jobs
+
+
+# ── Johnson Jobs alert parser ─────────────────────────────────────────────
+
+JOHNSONJOBS_URL_RE = re.compile(
+    r'https?://(?:www\.)?johnsonjobs\.com/[^\s"\'<>]+',
+    re.IGNORECASE,
+)
+JOHNSONJOBS_SKIP = (
+    "apply", "email", "http", "johnson jobs", "new job post", "job alert",
+    "unsubscribe", "privacy", "terms", "sign in", "view all", "manage alerts",
+)
+
+
+def _is_johnsonjobs_job_url(url: str) -> bool:
+    """Keep job/redirect links but reject account and footer links."""
+    low = url.lower().rstrip(").,;")
+    return not any(part in low for part in (
+        "unsubscribe", "optout", "privacy", "terms", "login", "signin",
+        "account", "preferences", "manage-alert", "contact",
+    ))
+
+
+def parse_johnsonjobs_alerts(body: str) -> list[dict]:
+    """Extract Johnson Jobs email listings without trusting their provenance.
+
+    Johnson Jobs links are retained as discovery URLs: they are commonly
+    redirect/tracking links, and primary-page enrichment must establish whether
+    the advertised employer and role are real before a lead can be trusted.
+    """
+    text, anchor_titles = _clean_email_html(body, _is_johnsonjobs_job_url)
+    jobs: list[dict] = []
+    seen_urls: set[str] = set()
+
+    for match in JOHNSONJOBS_URL_RE.finditer(text):
+        url = match.group(0).rstrip(").,;")
+        if url in seen_urls or not _is_johnsonjobs_job_url(url):
+            continue
+        seen_urls.add(url)
+
+        before = text[max(0, match.start() - 900):match.start()]
+        candidates = []
+        for line in before.splitlines()[-14:]:
+            line = re.sub(r'\s+', ' ', line).strip(" -|•\t")
+            low = line.lower()
+            if len(line) < 3 or any(keyword in low for keyword in JOHNSONJOBS_SKIP):
+                continue
+            candidates.append(line)
+
+        title = anchor_titles.get(url, "")
+        company = location = ""
+        if title:
+            context = candidates[:-1] if candidates and candidates[-1] == title else candidates
+            if len(context) >= 2:
+                company, location = context[-2:]
+            elif context:
+                company = context[-1]
+        elif len(candidates) >= 3:
+            title, company, location = candidates[-3:]
+        elif candidates:
+            title = candidates[-1]
+
+        if title and not is_boilerplate(title):
+            jobs.append({
+                "title": title,
+                "company": company or "Johnson Jobs listing",
                 "location": location,
                 "url": url,
             })
@@ -766,6 +842,7 @@ class GmailLjJobsSource:
         "jobserve_alert":     (parse_jobserve_alerts,     None,                            True),
         "jobserve_admin":     (None,                      None,                            False),
         "lensa_alert":        (parse_lensa_alerts,         None,                            True),
+        "johnsonjobs_alert":  (parse_johnsonjobs_alerts,   None,                            True),
     }
 
     def _process_email(self, msg: dict) -> List[WikiEntry]:
@@ -858,6 +935,7 @@ class GmailLjJobsSource:
             url=url or None, location=location or None,
             score=match.score, decision=match.decision, reasoning=match.reasoning,
             source=self.name,
+            advert_excerpt=location or "",
             **match_fields(match),
         )
         if record is not None:

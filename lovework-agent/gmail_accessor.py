@@ -101,14 +101,21 @@ def run_gapi(*args) -> Optional[object]:
     Returns None on any failure (script missing, non-zero exit, bad JSON, timeout) so
     callers can treat Gmail as unavailable and degrade gracefully.
     """
+    # Selecting a profile-specific script is not enough: standalone skill
+    # scripts resolve their token from $HERMES_HOME and otherwise default to
+    # ~/.hermes (the root/default profile). Propagate LoveWork's resolved
+    # profile so the script reads that profile's OAuth token too.
+    hermes_home = resolve_hermes_home()
     script = gapi_path()
     if not script.exists():
         logger.debug(f"[gmail] google_api.py not found: {script}")
         return None
+    env = os.environ.copy()
+    env["HERMES_HOME"] = str(hermes_home)
     try:
         result = subprocess.run(
             [gapi_python(), str(script), *args],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=60, env=env,
         )
     except Exception as e:
         logger.debug(f"[gmail] gapi call failed ({args}): {e}")

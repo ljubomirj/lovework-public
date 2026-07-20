@@ -165,6 +165,12 @@ def scan_applications(org: str, applications_dir: Optional[Path] = None) -> List
         if txt_path:
             try:
                 content = txt_path.read_text(encoding="utf-8", errors="ignore")
+                # A LoveWork PREPARED dossier is research for a possible
+                # application, not evidence that LJ applied.  It lives beside
+                # applications deliberately, so this explicit marker is the
+                # boundary that protects outcome/reapply logic.
+                if "LoveWork status: PREPARED — not submitted" in content:
+                    continue
                 # Look for rejection markers
                 rej_match = re.search(
                     r"rejection\s*(?:received|email)?\s*[:\-]?\s*(\d{4}-\d{2}-\d{2})",

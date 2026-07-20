@@ -1,7 +1,7 @@
 ---
 name: lovework
 description: "Run the LoveWork personal job discovery agent — autonomous cron pipeline (crawl org career pages → track in SQLite registry → score against the candidate profile → wiki), an interactive REPL, or the dashboard web UI. Use when the user wants to find jobs, crawl careers pages, check the job registry, query the agent, or watch live crawl state. Multi-candidate (lj, kj, vj, pk)."
-version: 2.3.0
+version: 2.4.0
 author: LJ
 license: proprietary
 platforms: [macos, linux]
@@ -82,6 +82,13 @@ public commit, inspect the staged patch for secrets and personal data, run the
 relevant tests, and report the exact staged scope. Never commit or push unless
 LJ has explicitly asked for that repository action.
 
+When asked whether files are suitable for the fully public
+`.git-lovework-public/` repository—or to prepare/review a public release—read
+[`references/public-release-review.md`](references/public-release-review.md)
+before staging. It defines the evidence-based review process, decision labels,
+and the distinction between source code, synthetic examples, live personal
+data, and host-specific operational artifacts.
+
 ## Profiles — multi-candidate, 3-layer model (D17)
 
 LoveWork serves four candidates, each with a profile under `profiles/<name>/`. LJ is patient #0: the developer of the system and also the first person to whom it was applied.
@@ -149,6 +156,7 @@ Use this decision tree:
 | "find new jobs" / "refresh" / "run a crawl" | `crosscheck.py` first (5s, no LLM); then `incremental_crawl.py` (3-15 min) |
 | "I just applied to X, did they reply?" | `crosscheck.py --org X` |
 | "I applied to X, did I get rejected?" | add the rejection to the .txt file: `echo "\nRejection received $(date +%Y-%m-%d): …" >> applications/YYYYMMDD-X-…/*.txt` |
+| "prepare the GO leads for review" | normal non-dry LJ crawls make `*-LoveWork/` PREPARED case packs; use `prepare_cases.py --report ... --dry-run` to preview/backfill an old report |
 | "show me the registry" | `main.py --registry-stats` |
 | "I want to chat with the agent" | `agent_main.py --profile lj --role general --query "..."` |
 | "find jobs for Kalen/Vedar/Petroula" | same commands with `--profile kj`/`vj`/`pk` and the role from their profile |
@@ -193,6 +201,32 @@ cd ~/Documents/LJ-work-2026/lovework/lovework-agent
 ../venv/bin/python3 main.py --profile lj --role general --source all --report
 ```
 
+### Scheduled-run evidence and watchdog
+
+Do not treat Hermes's `nohup` launch acknowledgement as crawl completion. For
+scheduled runs, the worker records its own start, terminal status, report path,
+active Hermes profile, and Gmail sent-message ID under
+`lovework-agent/cache/runs/`. When asked whether a scheduled crawl ran or why
+no result arrived, inspect this evidence before guessing:
+
+```bash
+cd ~/LJ-work-2026/lovework/lovework-agent
+ls -lt cache/runs/
+../venv/bin/python3 run_watchdog.py \
+  --run-type full --weekday 6 --time 09:00 \
+  --grace-minutes 15 --max-runtime-minutes 330
+ls -lt cache/incidents/
+```
+
+On gigul2, HermeL runs the full-crawl watchdog at 13:30 and 15:00 each Sunday.
+It has no LLM cost: silence means the 09:00 crawl has a complete terminal
+record and a Gmail message ID; output means a Telegram-visible incident needs
+investigation. Five minutes later, a wake-gated HermeL investigator receives a
+new incident and may repair only runtime/notification/observability code with
+tests; credentials, personal data, sources/scoring, Git, and schedules remain
+outside that authority. Read `docs/14-operational-meta-loop.md` for the fixed
+expectation → observation → investigation → regression-tested repair loop.
+
 ### Interactive mode (the agentic part)
 ```bash
 ../venv/bin/python3 agent_main.py --profile lj --role general --query "..."
@@ -213,6 +247,15 @@ cd ~/Documents/LJ-work-2026/lovework/lovework-agent
   decides to pursue it, `cases.slug_for(date, org, role)` returns a
   `YYYYMMDD-Company-Role` slug; `cases.make_case_dir(slug, ...)` creates
   the case directory under `applications/`.
+- **GO review packs (LJ)**: the normal pipeline creates
+  `YYYYMMDD-Company-Role-LoveWork/` packs for new actionable GO leads. Their
+  `.txt` starts `LoveWork status: PREPARED — not submitted`; this means
+  *research workspace only*, and `history.py` deliberately ignores it. Only
+  change the marker to `SUBMITTED` after LJ has actually applied. The pack
+  holds crawl provenance, advert evidence, assessment, and later diligence.
+  Existing/recent applications and malformed crawler titles are reported, not
+  duplicated. Use `prepare_cases.py --report <report> --dry-run` before a
+  manual historical backfill.
 
 ## Architecture (Phase-3-ready)
 

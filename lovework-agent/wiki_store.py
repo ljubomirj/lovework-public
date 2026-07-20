@@ -131,6 +131,7 @@ class WikiEntry:
         likely_day_to_day: Optional[str] = None,
         prestige_trap_risk: Optional[str] = None,
         assessment_status: Optional[str] = None,
+        advert_excerpt: Optional[str] = None,
     ):
         self.org_name = org_name
         self.title = title
@@ -160,6 +161,9 @@ class WikiEntry:
         self.likely_day_to_day = likely_day_to_day or ""
         self.prestige_trap_risk = prestige_trap_risk or ""
         self.assessment_status = assessment_status or "SCORED"
+        # The source text used by the matcher. Keep it out of public reports,
+        # but preserve it in a private review pack for a newly actionable lead.
+        self.advert_excerpt = advert_excerpt or ""
 
 
 class WikiStore:
@@ -172,7 +176,12 @@ class WikiStore:
         self.orgs_dir.mkdir(parents=True, exist_ok=True)
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
-    def save_report(self, entries: List[WikiEntry], profile_name: str = "LJ") -> Path:
+    def save_report(
+        self,
+        entries: List[WikiEntry],
+        profile_name: str = "LJ",
+        pack_results=None,
+    ) -> Path:
         """Save a daily run report.
 
         The filename includes an hourly timestamp suffix so multiple
@@ -232,6 +241,10 @@ class WikiStore:
             for e in sorted(items, key=lambda x: x.score, reverse=True):
                 _format_entry(lines, e)
             lines.append("")
+            if section == "GO" and pack_results:
+                from application_packs import render_pack_report_section
+
+                lines.extend(render_pack_report_section(pack_results))
 
         path.write_text("\n".join(lines), encoding="utf-8")
         logger.info(f"Report saved to {path}")

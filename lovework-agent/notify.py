@@ -2,22 +2,25 @@
 """
 LoveWork success notification — sends an email summary after a completed run.
 
-Called from cron shell scripts after the crawl succeeds:
-    incremental_crawl.py && python3 notify.py --report <path>
+Called from the cron worker after the crawl succeeds:
+    python3 notify.py --report <path> --log <path>
 
-Sends a brief executive summary via Gmail: run type, date, quantities, top 3-5 GOs.
+Sends the worker's final results summary via Gmail.  The final log block is
+authoritative: it contains the decisions, lifecycle counts, and curated
+new/GO/MAYBE listings calculated by the pipeline itself.
 """
 
 import argparse
+import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
 from hermes_context import resolve_hermes_home, identity_line
+from run_ledger import record_notification
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -34,6 +37,13 @@ def _find_gapi() -> Path:
     if _GAPI.exists():
         return _GAPI
     return _GAPI  # return path anyway, caller will handle error
+
+
+def _gapi_env() -> dict[str, str]:
+    """Run standalone Google scripts against LoveWork's active Hermes profile."""
+    env = os.environ.copy()
+    env["HERMES_HOME"] = str(_HERMES_HOME)
+    return env
 
 
 def parse_report(report_path: Path) -> dict:
@@ -58,6 +68,24 @@ def parse_report(report_path: Path) -> dict:
         m = re.search(rf"\b{k}:\s*(\d+)", text)
         if m:
             decisions[k] = int(m.group(1))
+
+    # Newer reports expose the operational action per listing rather than an
+    # aggregate GO/MAYBE/FLAG/DROP line. Derive the familiar summary only
+    # when the aggregate is absent, so notification email remains useful
+    # across both report formats.
+    if not decisions:
+        action_to_decision = {
+            "APPLY_NOW": "GO",
+            "MONITOR": "MAYBE",
+            "WARM_INTRO_ONLY": "MAYBE",
+            "USE_AS_GAP_SIGNAL": "FLAG",
+            "WATCH": "FLAG",
+            "DROP": "DROP",
+        }
+        for action in re.findall(r"\*\*Action\*\*:\s*([A-Z_]+)", text):
+            decision = action_to_decision.get(action)
+            if decision:
+                decisions[decision] = decisions.get(decision, 0) + 1
 
     # New / Still open / Disappeared counts
     lifecycle = {}
@@ -102,7 +130,33 @@ def parse_report(report_path: Path) -> dict:
     }
 
 
-def format_email(info: dict) -> tuple[str, str]:
+def extract_log_summary(log_path: Path) -> str | None:
+    """Extract the final human summary emitted by a full or incremental run.
+
+    This intentionally carries the pipeline's own curated list, including
+    URLs.  Reconstructing it from the markdown report loses decisions and can
+    accidentally mix new, GO, and MAYBE listings.
+    """
+    text = log_path.read_text(encoding="utf-8", errors="ignore")
+    full_matches = list(re.finditer(
+        r"^={60}\nLoveWork Results — .+?\n={60}\n(?P<body>.*?^Wiki: .+$)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    ))
+    if full_matches:
+        return full_matches[-1].group(0).strip()
+
+    incremental_matches = list(re.finditer(
+        r"^={70}\nLoveWork — Incremental Crawl — .+?\n={70}\n(?P<body>.*?^Report: .+$)",
+        text,
+        re.MULTILINE | re.DOTALL,
+    ))
+    if incremental_matches:
+        return incremental_matches[-1].group(0).strip()
+    return None
+
+
+def format_email(info: dict, log_summary: str | None = None) -> tuple[str, str]:
     """Format subject and body from parsed report info."""
     rt = info["run_type"]
     dt = info["date"] or "unknown date"
@@ -113,7 +167,9 @@ def format_email(info: dict) -> tuple[str, str]:
     lines.append(f"Report: {info['report_name']}")
     lines.append("")
 
-    if info["decisions"]:
+    if log_summary:
+        lines.append(log_summary)
+    elif info["decisions"]:
         dec = info["decisions"]
         parts = [f"GO: {dec.get('GO', 0)}"]
         if "MAYBE" in dec: parts.append(f"MAYBE: {dec['MAYBE']}")
@@ -121,7 +177,7 @@ def format_email(info: dict) -> tuple[str, str]:
         if "DROP" in dec: parts.append(f"DROP: {dec['DROP']}")
         lines.append("Decisions: " + " · ".join(parts))
 
-    if info["lifecycle"]:
+    if not log_summary and info["lifecycle"]:
         lc = info["lifecycle"]
         lc_parts = []
         for k in ("New", "Still open", "Disappeared"):
@@ -130,17 +186,18 @@ def format_email(info: dict) -> tuple[str, str]:
         if lc_parts:
             lines.append("Lifecycle: " + " · ".join(lc_parts))
 
-    if info["total"]:
+    if not log_summary and info["total"]:
         lines.append(f"Total entries: {info['total']}")
 
-    lines.append("")
-    lines.append("Top picks:")
+    if not log_summary:
+        lines.append("")
+        lines.append("Top picks:")
 
-    if info["top_gos"]:
-        for i, (score, org, title) in enumerate(info["top_gos"], 1):
-            lines.append(f"  {i}. [{score}/10] {org} — {title}")
-    else:
-        lines.append("  (none)")
+        if info["top_gos"]:
+            for i, (score, org, title) in enumerate(info["top_gos"], 1):
+                lines.append(f"  {i}. [{score}/10] {org} — {title}")
+        else:
+            lines.append("  (none)")
 
     lines.append("")
     lines.append("— LoveWork bot")
@@ -149,58 +206,58 @@ def format_email(info: dict) -> tuple[str, str]:
     return subject, body
 
 
-def send_email(subject: str, body: str) -> bool:
-    """Send email via system `mail` command.
+def send_email_result(subject: str, body: str) -> dict[str, str | bool]:
+    """Send through the active Hermes Gmail profile and return delivery proof.
 
-    Falls back to Hermes google_api.py if `mail` is unavailable.
+    Local Postfix only proves acceptance by a local queue; it cannot prove that
+    Gmail accepted delivery and is known to be rejected from this host.  A
+    successful Gmail API response includes the sent message id, which becomes
+    the durable notification evidence for the run watchdog.
     """
-    # Try system `mail` first (simple, no OAuth needed)
-    mail_cmd = shutil.which("mail")
-    if mail_cmd:
-        try:
-            proc = subprocess.Popen(
-                [mail_cmd, "-s", subject, TO_EMAIL],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True,
-            )
-            stdout, stderr = proc.communicate(input=body, timeout=30)
-            if proc.returncode == 0:
-                logger.info(f"Email sent via mail: {subject}")
-                return True
-            logger.warning(f"mail returned {proc.returncode}: {stderr.strip()}")
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
-            logger.warning("mail timed out")
-        except Exception as e:
-            logger.warning(f"mail failed: {e}")
-
-    # Fallback: Hermes google_api.py
     gapi = _find_gapi()
-    if gapi.exists():
-        cmd = [
-            sys.executable, str(gapi),
-            "gmail", "send",
-            "--to", TO_EMAIL,
-            "--subject", subject,
-            "--body", body,
-        ]
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode == 0:
-                logger.info(f"Email sent via Gmail API: {subject}")
-                return True
-            logger.warning(f"Gmail API failed: {result.stderr.strip()[:200]}")
-        except Exception as e:
-            logger.warning(f"Gmail API error: {e}")
+    if not gapi.exists():
+        return {"ok": False, "error": f"Gmail helper not found: {gapi}"}
+    cmd = [
+        sys.executable,
+        str(gapi),
+        "gmail",
+        "send",
+        "--to",
+        TO_EMAIL,
+        "--subject",
+        subject,
+        "--body",
+        body,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=30, env=_gapi_env(),
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"Gmail API error: {exc}"}
+    if result.returncode != 0:
+        return {"ok": False, "error": result.stderr.strip()[:500] or "Gmail API failed"}
+    try:
+        response = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"ok": False, "error": "Gmail API returned no parseable delivery receipt"}
+    message_id = str(response.get("id") or "").strip()
+    if response.get("status") != "sent" or not message_id:
+        return {"ok": False, "error": "Gmail API did not return a sent message id"}
+    logger.info("Email sent via Gmail API: %s", subject)
+    return {"ok": True, "provider": "gmail_api", "message_id": message_id}
 
-    logger.error("All email methods failed")
-    return False
+
+def send_email(subject: str, body: str) -> bool:
+    """Compatibility wrapper for callers that only need success/failure."""
+    return bool(send_email_result(subject, body).get("ok"))
 
 
 def main():
     ap = argparse.ArgumentParser(description="Send LoveWork success notification email")
     ap.add_argument("--report", "-r", required=True, help="Path to the report file")
+    ap.add_argument("--log", type=Path, help="Crawl log containing the final results summary")
+    ap.add_argument("--run-id", help="Run ledger record to update with Gmail delivery evidence")
     args = ap.parse_args()
 
     report_path = Path(args.report)
@@ -209,15 +266,36 @@ def main():
         sys.exit(1)
 
     info = parse_report(report_path)
-    subject, body = format_email(info)
+    log_summary = extract_log_summary(args.log) if args.log and args.log.exists() else None
+    if args.log and not log_summary:
+        logger.warning("No final result summary found in crawl log: %s", args.log)
+    subject, body = format_email(info, log_summary)
 
     logger.info(f"Sending email for {info['run_type']} run on {info['date']}")
     logger.info(f"GOs: {info['decisions'].get('GO', 0)}, Top: {info['top_gos'][0][0] if info['top_gos'] else 'none'}")
 
-    if send_email(subject, body):
-        logger.info("Notification sent successfully")
-    else:
-        logger.warning("Email notification failed (non-fatal)")
+    result = send_email_result(subject, body)
+    if result.get("ok"):
+        if args.run_id:
+            record_notification(
+                args.run_id,
+                status="sent",
+                provider=str(result["provider"]),
+                message_id=str(result["message_id"]),
+            )
+        logger.info("Notification sent successfully: Gmail message %s", result["message_id"])
+        return
+
+    error = str(result.get("error") or "unknown Gmail notification failure")
+    if args.run_id:
+        record_notification(
+            args.run_id,
+            status="failed",
+            provider="gmail_api",
+            error=error,
+        )
+    logger.error("Email notification failed: %s", error)
+    sys.exit(1)
 
 
 if __name__ == "__main__":

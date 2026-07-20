@@ -127,8 +127,18 @@ def main():
             for e in sorted(go, key=lambda x: x.score, reverse=True):
                 if e not in new_jobs:  # Already shown above
                     print(f"  [{e.score:.1f}] {e.org_name} — {e.title}")
-                    if e.url:
-                        print(f"        {e.url}")
+                if e.url:
+                    print(f"        {e.url}")
+        pack_results = [
+            getattr(entry, "case_pack_result") for entry in all_entries
+            if getattr(entry, "case_pack_result", None) is not None
+        ]
+        if pack_results:
+            print("\n★ LoveWork application packs:")
+            for result in pack_results:
+                location = str(result.path) if result.path else "-"
+                print(f"  [{result.status}] {result.entry.org_name} — {result.entry.title}")
+                print(f"        {location} ({result.reason})")
         if maybe:
             print(f"\n◆ MAYBE listings:")
             for e in sorted(maybe, key=lambda x: x.score, reverse=True)[:10]:

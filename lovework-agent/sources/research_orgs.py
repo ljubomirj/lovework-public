@@ -85,6 +85,7 @@ class ResearchOrgsSource:
                         decision=match.decision,
                         reasoning=match.reasoning,
                         source=self.name,
+                        advert_excerpt=desc,
                         **match_fields(match),
                     )
                     # Tag with registry status for the report

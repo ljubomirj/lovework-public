@@ -213,6 +213,15 @@ def main():
                 report_lines.append(f"- **Lifecycle**: {e.lifecycle_status}")
             report_lines.append("")
 
+    from application_packs import render_pack_report_section
+
+    pack_results = [
+        getattr(entry, "case_pack_result")
+        for entry in all_entries + gmail_entries + hn_entries + jobs_entries
+        if getattr(entry, "case_pack_result", None) is not None
+    ]
+    report_lines += render_pack_report_section(pack_results)
+
     if cross_check_log:
         report_lines.append("## Cross-check: prior contact found\n")
         for x in cross_check_log:

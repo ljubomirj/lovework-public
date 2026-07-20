@@ -299,6 +299,7 @@ class HNHiringJobsSource:
             source=self.name,
             discovery_url=comment_url,
             discovery_date=discovery_date,
+            advert_excerpt=description,
             **match_fields(match),
         )
         if record is not None:

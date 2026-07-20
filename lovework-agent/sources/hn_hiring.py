@@ -144,6 +144,7 @@ class HNHiringSource:
             source=self.name,
             discovery_url=comment_url,
             discovery_date=job.get("discovery_date", ""),
+            advert_excerpt=body,
             **match_fields(match),
         )
         if record is not None:

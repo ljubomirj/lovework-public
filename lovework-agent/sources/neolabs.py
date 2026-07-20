@@ -128,6 +128,7 @@ class NeolabsSource:
                         decision=match.decision,
                         reasoning=match.reasoning,
                         source=self.name,
+                        advert_excerpt=desc,
                         **match_fields(match),
                     )
                     if record is not None:

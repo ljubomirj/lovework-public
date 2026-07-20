@@ -72,6 +72,10 @@ The simulator is valuable precisely because reality remains the authority. Its
 purpose is to spend less of reality on avoidable mistakes, not to replace
 reality with a persuasive story.
 
+For the formal probabilistic frame—separating fit from company hiring reality,
+candidacy, and the value of the next action—see
+[`13-probabilistic-simulator-model.md`](13-probabilistic-simulator-model.md).
+
 ## The persona simulator
 
 The "living model of person" is a persona simulator, not a static profile. It

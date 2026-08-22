@@ -1,6 +1,7 @@
 """Tests for durable crawl-run evidence and deterministic reconciliation."""
 
 from datetime import datetime, timedelta, timezone
+import sys
 
 import run_ledger
 import run_watchdog
@@ -54,6 +55,48 @@ def test_run_ledger_records_terminal_outcome_and_notification(tmp_path):
     assert record["status"] == "succeeded"
     assert record["notification"]["message_id"] == "gmail-message-123"
     assert run_ledger.list_runs("full", tmp_path)[0]["run_id"] == record["run_id"]
+
+
+def test_cli_accepts_historical_evidence_timestamps(tmp_path, monkeypatch):
+    runs_dir = tmp_path / "runs"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_ledger.py", "--runs-dir", str(runs_dir), "start",
+            "--run-id", "full-legacy", "--run-type", "full",
+            "--profile", "hermel", "--hermes-home", "/profiles/hermel",
+            "--log-file", "/logs/full.log", "--started-at", "2026-07-19T09:00:53+01:00",
+        ],
+    )
+    assert run_ledger._main() == 0
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_ledger.py", "--runs-dir", str(runs_dir), "finish",
+            "--run-id", "full-legacy", "--status", "succeeded", "--exit-code", "0",
+            "--report-file", "/reports/full.md", "--finished-at", "2026-07-19T12:42:40+01:00",
+        ],
+    )
+    assert run_ledger._main() == 0
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_ledger.py", "--runs-dir", str(runs_dir), "notification",
+            "--run-id", "full-legacy", "--status", "sent", "--provider", "gmail_api",
+            "--message-id", "mail-123", "--attempted-at", "2026-07-19T21:57:00+01:00",
+        ],
+    )
+    assert run_ledger._main() == 0
+
+    record = run_ledger.load_run("full-legacy", runs_dir)
+    assert record["started_at"] == "2026-07-19T09:00:53+01:00"
+    assert record["finished_at"] == "2026-07-19T12:42:40+01:00"
+    assert record["notification"]["attempted_at"] == "2026-07-19T21:57:00+01:00"
 
 
 def test_watchdog_accepts_complete_run_with_gmail_proof():

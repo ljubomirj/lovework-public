@@ -38,9 +38,9 @@ def resolve_hermes_home() -> Path:
     profile = os.environ.get("LOVEWORK_HERMES_PROFILE") or HOST_PROFILES.get(host)
     base = Path(os.environ.get("LOVEWORK_HERMES_BASE", f"{Path.home()}/.hermes-{host}"))
     if not profile:
-        candidates = sorted(p for p in (base / "profiles").glob("*") if p.is_dir())
-        if len(candidates) == 1:
-            profile = candidates[0].name
+        available_profiles = sorted(p for p in (base / "profiles").glob("*") if p.is_dir())
+        if len(available_profiles) == 1:
+            profile = available_profiles[0].name
         else:
             raise RuntimeError(
                 f"No Hermes profile configured for host {host!r}; set LOVEWORK_HERMES_PROFILE"

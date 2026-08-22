@@ -1,6 +1,6 @@
-# Work Authorization — (candidate name)
+# Work Authorization — (principal name)
 
-> Where this candidate may live and work, and which roles are auto-DROP because of
+> Where this principal may live and work, and which roles are auto-DROP because of
 > visa/work-permit constraints. The matcher reads this for context, and the
 > work-auth hard-kill (matcher.WORK_AUTH_KILL_PATTERNS) auto-DROPs roles like
 > "US citizen only" / "no visa sponsorship" regardless of fit.

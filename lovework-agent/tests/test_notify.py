@@ -129,3 +129,75 @@ afterwards
     assert "Disappeared this run:       69" in body
     assert "https://talkmachine.com/jobs/engineer" in body
     assert "Top picks:" not in body
+
+
+# --- Gmail OAuth token pre-flight check ---
+
+class _FakeCreds:
+    def __init__(self, refresh_token="rt", error=None):
+        self.refresh_token = refresh_token
+        self._error = error
+
+    def refresh(self, request):
+        if self._error:
+            raise self._error
+
+
+def test_check_token_authenticated(monkeypatch, tmp_path):
+    profile = tmp_path / "profiles" / "hermel"
+    profile.mkdir(parents=True)
+    (profile / "google_token.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(notify, "_load_credentials", lambda path: _FakeCreds())
+    monkeypatch.setattr(notify, "_refresh_credentials", lambda creds: None)
+
+    result = notify.check_token(profile)
+    assert result == {
+        "ok": True, "status": "authenticated", "detail": "Gmail OAuth token can refresh",
+    }
+
+
+def test_check_token_revoked(monkeypatch, tmp_path):
+    profile = tmp_path / "profiles" / "hermel"
+    profile.mkdir(parents=True)
+    (profile / "google_token.json").write_text("{}", encoding="utf-8")
+    revoked = Exception("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(notify, "_load_credentials", lambda path: _FakeCreds(error=revoked))
+
+    result = notify.check_token(profile)
+    assert result["ok"] is False
+    assert result["status"] == "revoked"
+    assert "invalid_grant" in str(result["detail"])
+
+
+def test_check_token_missing_file(tmp_path):
+    result = notify.check_token(tmp_path / "no-such-profile")
+    assert result["ok"] is False
+    assert result["status"] == "missing"
+
+
+def test_check_token_transient_error_does_not_claim_revoked(monkeypatch, tmp_path):
+    profile = tmp_path / "profiles" / "hermel"
+    profile.mkdir(parents=True)
+    (profile / "google_token.json").write_text("{}", encoding="utf-8")
+    transient = Exception("Connection reset by peer")
+
+    monkeypatch.setattr(notify, "_load_credentials", lambda path: _FakeCreds(error=transient))
+
+    result = notify.check_token(profile)
+    assert result["ok"] is False
+    assert result["status"] == "error"
+    assert "invalid_grant" not in str(result["detail"])
+
+
+def test_classify_notification_error_prefixes_invalid_grant():
+    traceback = "Traceback ...\ngoogle.auth.exceptions.RefreshError: ('invalid_grant: Token has been expired or revoked.', ...)"
+    classified = notify.classify_notification_error(traceback)
+    assert classified.startswith("GMAIL_OAUTH_TOKEN_REVOKED:")
+    assert "invalid_grant" in classified
+
+
+def test_classify_notification_error_keeps_other_errors_unchanged():
+    error = "Gmail API failed: 503"
+    assert notify.classify_notification_error(error) == error

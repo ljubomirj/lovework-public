@@ -1,7 +1,7 @@
 # Synthetic LoveWork report
 
 > This demonstration uses the fictional profile **Mara Vale** and invented
-> organisations. It contains no real crawl or candidate data.
+> organisations. It contains no real crawl or principal data.
 
 ## Pursue — Tideglass Cooperative: Climate Data Product Engineer
 

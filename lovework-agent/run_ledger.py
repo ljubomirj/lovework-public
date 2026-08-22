@@ -183,6 +183,10 @@ def _main() -> int:
     start.add_argument("--hermes-home", required=True)
     start.add_argument("--log-file", required=True)
     start.add_argument("--pid", type=int)
+    start.add_argument(
+        "--started-at",
+        help="ISO-8601 start time for evidence-preserving historical reconstruction",
+    )
 
     finish = subparsers.add_parser("finish")
     finish.add_argument("--run-id", required=True)
@@ -190,6 +194,10 @@ def _main() -> int:
     finish.add_argument("--exit-code", required=True, type=int)
     finish.add_argument("--report-file")
     finish.add_argument("--error")
+    finish.add_argument(
+        "--finished-at",
+        help="ISO-8601 finish time for evidence-preserving historical reconstruction",
+    )
 
     notification = subparsers.add_parser("notification")
     notification.add_argument("--run-id", required=True)
@@ -197,6 +205,10 @@ def _main() -> int:
     notification.add_argument("--provider", required=True)
     notification.add_argument("--message-id")
     notification.add_argument("--error")
+    notification.add_argument(
+        "--attempted-at",
+        help="ISO-8601 notification time for evidence-preserving historical reconstruction",
+    )
 
     args = parser.parse_args()
     if args.command == "start":
@@ -207,6 +219,7 @@ def _main() -> int:
             hermes_home=args.hermes_home,
             log_file=args.log_file,
             pid=args.pid,
+            started_at=args.started_at,
             runs_dir=args.runs_dir,
         )
     elif args.command == "finish":
@@ -216,6 +229,7 @@ def _main() -> int:
             exit_code=args.exit_code,
             report_file=args.report_file,
             error=args.error,
+            finished_at=args.finished_at,
             runs_dir=args.runs_dir,
         )
     else:
@@ -225,6 +239,7 @@ def _main() -> int:
             provider=args.provider,
             message_id=args.message_id,
             error=args.error,
+            attempted_at=args.attempted_at,
             runs_dir=args.runs_dir,
         )
     print(json.dumps(result, sort_keys=True))

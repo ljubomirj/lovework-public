@@ -1,4 +1,4 @@
-from assessment_cache import AssessmentCachingMatcher
+from assessment_cache import AssessmentCachingMatcher, assessment_cache_namespace
 from matcher import MatchResult
 
 
@@ -38,3 +38,11 @@ def test_unscored_failure_is_not_cached(tmp_path):
     cached.match("Engineer", "voice AI", "Talk Machine")
     assert inner.calls == 2
     assert list(tmp_path.glob("*.json")) == []
+
+
+def test_assessment_namespace_changes_when_effective_profile_changes():
+    first = assessment_cache_namespace("vj", "data-statistics-pricing", "test", "profile v1")
+    second = assessment_cache_namespace("vj", "data-statistics-pricing", "test", "profile v2")
+
+    assert first != second
+    assert "vj:data-statistics-pricing" in first

@@ -13,7 +13,7 @@ That makes privacy part of the architecture, not an optional policy layer.
 
 ## What is private by default
 
-- Real candidate profiles, CVs, biographies, constraints, and aspirations.
+- Real principal profiles, CVs, biographies, constraints, and aspirations.
 - Application histories, correspondence, interviews, and outcomes.
 - Email-derived leads and personally curated source lists.
 - Model reasoning that reveals private preferences or past contact.

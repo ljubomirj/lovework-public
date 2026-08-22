@@ -302,6 +302,31 @@ def test_source_noop_when_gapi_unavailable(monkeypatch):
     assert src.run() == []
 
 
+def test_principal_source_uses_its_own_label_and_credential_home(monkeypatch, tmp_path):
+    """VJ's source must not silently query LJ's label or token home."""
+    calls = []
+    credential_home = tmp_path / "petroula-vj"
+
+    def fake_gapi(*args, **kwargs):
+        calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr(G, "run_gapi", fake_gapi)
+    src = G.GmailJobsSource(
+        matcher=None,
+        registry=None,
+        label="VJ-jobs",
+        credential_home=credential_home,
+        source_name="gmail_vj_jobs",
+    )
+
+    assert src.run() == []
+    assert calls == [
+        (("gmail", "search", "label:VJ-jobs is:unread", "--max", str(G.MAX_EMAILS)),
+         {"credential_home": credential_home})
+    ]
+
+
 # ── Source: offline end-to-end ingest → match → mark-read ──────────────────
 
 class _FakeMatcher:
@@ -373,6 +398,9 @@ def test_source_mark_read_disabled(monkeypatch):
 
 
 def test_source_lensa_alert_dispatches_and_marks_read(monkeypatch):
+    # P3 — Lensa is US-market noise, gated off by default. Enable it here
+    # to verify the dispatch + mark-read path works when a principal opts in.
+    monkeypatch.setenv("LOVEWORK_GMAIL_LENSA_ENABLED", "1")
     calls = []
 
     def fake_gapi(*args):
@@ -398,6 +426,33 @@ def test_source_lensa_alert_dispatches_and_marks_read(monkeypatch):
         "Machine Learning Engineer", "Applied AI Researcher",
     ]
     assert all(entry.url.startswith("https://lensa.com/") for entry in entries)
+    assert any(call[:2] == ("gmail", "modify") for call in calls)
+
+
+def test_source_lensa_disabled_by_default_consumes_without_leads(monkeypatch):
+    """P3 — Lensa is US-market noise: consumed (marked read) but no leads."""
+    calls = []
+
+    def fake_gapi(*args):
+        calls.append(args)
+        if args[:2] == ("gmail", "search"):
+            return [{
+                "id": "lensa-1",
+                "from": "Lensa Aggregated <aggregated@lensa.com>",
+                "subject": "Jobs you might like",
+            }]
+        if args[:2] == ("gmail", "get"):
+            return {"body": LENSA_BODY}
+        if args[:2] == ("gmail", "modify"):
+            return {}
+        return None
+
+    monkeypatch.setattr(G, "run_gapi", fake_gapi)
+    src = G.GmailLjJobsSource(
+        matcher=_FakeMatcher(), registry=_FakeRegistry(), mark_read=True,
+    )
+    entries = src.run()
+    assert entries == []
     assert any(call[:2] == ("gmail", "modify") for call in calls)
 
 
@@ -448,3 +503,104 @@ def test_recognised_lead_with_zero_parsed_jobs_stays_unread(monkeypatch):
 
     assert src.run() == []
     assert not any(c[:2] == ("gmail", "modify") for c in calls)
+
+
+# ── CV-Library alert parser ───────────────────────────────────────────────
+
+CV_LIBRARY_BODY = """\
+Hi Ljubomir, we have new jobs for you on CV-Library
+
+
+*****************************************************************
+AI Security Software Engineer (GenAI & LLM Security) (
+https://clicks.cv-library.co.uk/f/a/TRACK1~~/token
+)
+*****************************************************************City of London, London,
+£85,000 -
+£90,000/per annumApply  (
+https://clicks.cv-library.co.uk/f/a/APPLY1~~/token
+)AI Security Software Engineer (GenAI & LLM Security) Location: London
+View more (
+https://clicks.cv-library.co.uk/f/a/TRACK1~~/token
+)
+
+*****************************************************************
+AWS AI Agent Engineer (
+https://clicks.cv-library.co.uk/f/a/TRACK2~~/token
+)
+*****************************************************************London,
+£375 -
+£400/per dayApply  (
+https://clicks.cv-library.co.uk/f/a/APPLY2~~/token
+)AWS AI Agent Engineer Location: London Rate: £400/day
+View more (
+https://clicks.cv-library.co.uk/f/a/TRACK2~~/token
+)
+"""
+
+
+def test_parse_cv_library_alerts_extracts_two_jobs():
+    """CV-Library alert with 2 jobs parses correctly."""
+    jobs = G.parse_cv_library_alerts(CV_LIBRARY_BODY)
+    assert len(jobs) == 2
+    assert jobs[0]["title"] == "AI Security Software Engineer (GenAI & LLM Security)"
+    assert jobs[0]["location"] == "City of London, London"
+    assert "clicks.cv-library.co.uk" in jobs[0]["url"]
+    assert jobs[1]["title"] == "AWS AI Agent Engineer"
+    assert jobs[1]["location"] == "London"
+    assert "clicks.cv-library.co.uk" in jobs[1]["url"]
+
+
+def test_parse_cv_library_alerts_dedupes_duplicate_urls():
+    """Same URL appearing twice yields one entry."""
+    body = CV_LIBRARY_BODY + CV_LIBRARY_BODY
+    jobs = G.parse_cv_library_alerts(body)
+    assert len(jobs) == 2  # not 4
+
+
+def test_parse_cv_library_alerts_skips_footer_links():
+    """Footer/boilerplate links are not extracted."""
+    footer = """\
+Get it on Google Play (
+https://clicks.cv-library.co.uk/f/a/FOOTER~~/token
+)
+"""
+    jobs = G.parse_cv_library_alerts(CV_LIBRARY_BODY + footer)
+    assert len(jobs) == 2  # footer not parsed
+
+
+def test_classify_cv_library_alert():
+    """CV-Library job alert is classified correctly."""
+    result = G.classify_email({
+        "from": "CV-Library <Admin@careers.cv-library.co.uk>",
+        "subject": "2 new Genai Engineer jobs in Greater London",
+    })
+    assert result == "cv_library_alert"
+
+
+def test_source_cv_library_dispatch_and_mark_read(monkeypatch):
+    """Full CV-Library flow: search → parse → registry → match → mark-read."""
+    calls = []
+
+    def fake_gapi(*args):
+        calls.append(args)
+        if args[:2] == ("gmail", "search"):
+            return [{
+                "id": "cvlib-1",
+                "from": "CV-Library <Admin@careers.cv-library.co.uk>",
+                "subject": "2 new Genai Engineer jobs in Greater London",
+            }]
+        if args[:2] == ("gmail", "get"):
+            return {"body": CV_LIBRARY_BODY}
+        if args[:2] == ("gmail", "modify"):
+            return {}
+        return None
+
+    monkeypatch.setattr(G, "run_gapi", fake_gapi)
+    entries = G.GmailLjJobsSource(
+        matcher=_FakeMatcher(), registry=_FakeRegistry(), mark_read=True,
+    ).run()
+    titles = sorted(e.title for e in entries)
+    assert titles == ["AI Security Software Engineer (GenAI & LLM Security)", "AWS AI Agent Engineer"]
+    assert all("clicks.cv-library.co.uk" in (e.url or "") for e in entries)
+    assert any(call[:2] == ("gmail", "modify") for call in calls)

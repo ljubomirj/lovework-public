@@ -1,12 +1,12 @@
 ---
 name: lovework
-description: "Run the LoveWork personal job discovery agent — autonomous cron pipeline (crawl org career pages → track in SQLite registry → score against the candidate profile → wiki), an interactive REPL, or the dashboard web UI. Use when the user wants to find jobs, crawl careers pages, check the job registry, query the agent, or watch live crawl state. Multi-candidate (lj, kj, vj, pk)."
+description: "Run the LoveWork personal job discovery agent — autonomous cron pipeline (crawl org career pages → track in SQLite registry → score against the principal profile → wiki), an interactive REPL, or the dashboard web UI. Use when the user wants to find jobs, crawl careers pages, check the job registry, query the agent, or watch live crawl state. Multi-principal (lj, kj, vj, pk)."
 version: 2.4.0
 author: LJ
 license: proprietary
 platforms: [macos, linux]
 prerequisites: "Python 3.11+, uv. API keys DEEPSEEK_API_KEY + FIRECRAWL_API_KEY in ~/Documents/LJ-work-2026/lovework/lovework-agent/.env"
-tags: [jobs, career, multi-candidate, job-discovery, ai-ml, crawling, agent]
+tags: [jobs, career, multi-principal, job-discovery, ai-ml, crawling, agent]
 related_skills: [career-ops, work-crawler]
 ---
 
@@ -16,7 +16,7 @@ Mission: **LoveWork.** *Work that you love, so you never work a day in your life
 
 LoveWork crawls organisation career pages (LLM-guided), tracks every job ever seen in a
 SQLite registry (lifecycle: `new` / `still_open` / `long_lasting` / `disappeared`), scores
-each against the candidate profile (LLM, 0–10, GO/MAYBE/FLAG/DROP) using prior-contact
+each against the principal profile (LLM, 0–10, GO/MAYBE/FLAG/DROP) using prior-contact
 context from `applications/` + Gmail, and writes findings to a local markdown wiki.
 
 ## Status
@@ -76,8 +76,19 @@ For the public repository, treat the following as excluded by default:
   material, reports, registry/cache/database files, and dataset ledgers;
 - generated crawl output and anything whose provenance or consent is unclear.
 
+Gmail source credentials are always host-local and never live in this
+worktree or any LoveWork Git history:
+`~/.lovework/credentials/gmail/<hostname>/<credential-key>/`. One visible
+`~/.lovework/` root works on every host; the hostname is a child path, not a
+host-suffixed directory selected through a symlink. The active Hermes profile's
+token is a separate runtime credential. Do not copy or refresh either
+credential through LoveWork Git or a cross-host project merge. LJ may
+personally track his host-local `.lovework/` in his private `githome`, but that
+is a human-owned, installation-specific choice: agents must not assume,
+create, stage, or sync such a repository.
+
 Engine Python, source adapters, tests, generic shell wrappers, public docs,
-and anonymised examples are candidates for intentional publication. Before a
+and anonymised examples are eligible for intentional publication. Before a
 public commit, inspect the staged patch for secrets and personal data, run the
 relevant tests, and report the exact staged scope. Never commit or push unless
 LJ has explicitly asked for that repository action.
@@ -89,14 +100,14 @@ before staging. It defines the evidence-based review process, decision labels,
 and the distinction between source code, synthetic examples, live personal
 data, and host-specific operational artifacts.
 
-## Profiles — multi-candidate, 3-layer model (D17)
+## Profiles — multi-principal, 3-layer model (D17)
 
-LoveWork serves four candidates, each with a profile under `profiles/<name>/`. LJ is patient #0: the developer of the system and also the first person to whom it was applied.
+LoveWork serves four principals, each with a profile under `profiles/<name>/`. LJ is patient #0: the developer of the system and also the first person to whom it was applied.
 
-| Profile | Candidate | Mode | Primary roles |
+| Profile | Principal | Mode | Primary roles |
 |---------|-----------|------|---------------|
 | `lj` | Ljubomir | targeted match (patient #0) | general, contract-ai, cofounder, ai-finance |
-| `vj` | Vedar | **emergent profession + job search** (first non-LJ user; profession TBD) | platform-sre, ml-ai, general |
+| `vj` | Vedar | **statistics/data/pricing/actuarial + sports-analytics job search** | data-statistics-pricing (primary), general; platform-sre/ml-ai are historical only |
 | `kj` | Kalen | targeted match — already chose chemist as profession; chemistry+ML differentiator | cheminf, ai-drug-discovery, general |
 | `pk` | Petroula | **third profession** (after ArHi, TA) | digital-art, art-research, general |
 
@@ -110,9 +121,9 @@ Plus: `soul.md` (identity, wants, avoids), `work_auth.md` (visa/location rules d
 
 **Operating modes matter for interpretation:**
 - **lj, kj (targeted match):** score listings against a known profession; optimise for the best fit. KJ is Kalen, a chemist by profession.
-- **vj, pk (emergent / third profession):** the profession is *not yet chosen*. VJ is Vedar, the first non-LJ user; he is looking for both a profession and a job, with profession discovery as the higher-order task. The matcher leans toward MAYBE over KILL to grow a wide thicket of plausible listings; clusters of fit in the thicket are *candidate professions*. Read their `possibilities.md` framing before interpreting their reports.
+- **vj, pk (emergent / third profession):** the profession is *not yet chosen*. VJ is Vedar, the first non-LJ user; he is looking for both a profession and a job, with profession discovery as the higher-order task. The matcher leans toward MAYBE over KILL to grow a wide thicket of plausible listings; clusters of fit in the thicket are *principal professions*. Read their `possibilities.md` framing before interpreting their reports.
 
-Always pass `--profile <name> --role <role>` to the CLI. Default examples below use `lj`/`general`; swap for the candidate you're working with.
+Always pass `--profile <name> --role <role>` to the CLI. Default examples below use `lj`/`general`; swap for the principal you're working with.
 
 ## Setup (one-time)
 
@@ -138,7 +149,7 @@ The shared Hermes key works (it uses the same OpenCode Go relay):
 # .env — use the Hermes OpenCode Go key
 LLM_API_KEY=sk-...          # Same as OPENCODE_GO_API_KEY in Hermes config
 LLM_BASE_URL=https://opencode.ai/zen/go/v1
-LLM_MODEL=deepseek-v4-flash
+LLM_MODEL=mimo-v2.5
 FIRECRAWL_API_KEY=sk-...    # Optional, for JS-rendered pages
 ```
 
@@ -157,6 +168,7 @@ Use this decision tree:
 | "I just applied to X, did they reply?" | `crosscheck.py --org X` |
 | "I applied to X, did I get rejected?" | add the rejection to the .txt file: `echo "\nRejection received $(date +%Y-%m-%d): …" >> applications/YYYYMMDD-X-…/*.txt` |
 | "prepare the GO leads for review" | normal non-dry LJ crawls make `*-LoveWork/` PREPARED case packs; use `prepare_cases.py --report ... --dry-run` to preview/backfill an old report |
+| "prepare an agent-to-agent interview" | use `prepare_agent_interview.py --dry-run` first; ATA packs end `-LoveWork-ATA` and remain non-applications until the provider confirms start |
 | "show me the registry" | `main.py --registry-stats` |
 | "I want to chat with the agent" | `agent_main.py --profile lj --role general --query "..."` |
 | "find jobs for Kalen/Vedar/Petroula" | same commands with `--profile kj`/`vj`/`pk` and the role from their profile |
@@ -201,6 +213,27 @@ cd ~/Documents/LJ-work-2026/lovework/lovework-agent
 ../venv/bin/python3 main.py --profile lj --role general --source all --report
 ```
 
+### Reassess existing leads after a profile change (no crawl)
+
+Use the cached-evidence replay when a principal changes profession, location
+preferences, or other matcher-relevant profile material. It reads only that
+principal's registry and saved primary advert text, then writes a separate
+dated reassessment report; it never fetches the web, reads Gmail, changes
+lifecycle state, or overwrites historical reports.
+
+```bash
+cd ~/LJ-work-2026/lovework/lovework-agent
+../venv/bin/python3 reassess.py --profile vj --role data-statistics-pricing
+../venv/bin/python3 reassess.py --profile vj --role data-statistics-pricing --dry-run
+```
+
+The normal `rescore.py` command is intentionally narrower: it only reapplies
+cheap rule-based reapply/work-authorisation kills to historical wiki entries.
+It cannot recompute profile fit. Cached-evidence reassessment marks a record
+`UNSCORED` when its primary advert was not retained, rather than fetching or
+inventing evidence. Assessment cache namespaces include a fingerprint of the
+full effective profile, so profile edits cannot reuse old scores by accident.
+
 ### Scheduled-run evidence and watchdog
 
 Do not treat Hermes's `nohup` launch acknowledgement as crawl completion. For
@@ -218,7 +251,8 @@ ls -lt cache/runs/
 ls -lt cache/incidents/
 ```
 
-On gigul2, HermeL runs the full-crawl watchdog at 13:30 and 15:00 each Sunday.
+On gigul2, HermeL runs principal-owned full sweeps and watchdogs: LJ on Sunday
+and VJ on Saturday, each checked at 13:30 and 15:00 on its own sweep day.
 It has no LLM cost: silence means the 09:00 crawl has a complete terminal
 record and a Gmail message ID; output means a Telegram-visible incident needs
 investigation. Five minutes later, a wake-gated HermeL investigator receives a
@@ -242,7 +276,7 @@ expectation → observation → investigation → regression-tested repair loop.
 - **Same-role cooldown** (default 6 months): same role + recent rejection →
   DROP. Catches re-applying to the exact same role.
 - **Work-authorization hard-kill**: US citizen / no visa sponsorship → DROP
-  before the LLM call. Per-candidate rules in `profiles/<name>/work_auth.md`.
+  before the LLM call. Per-principal rules in `profiles/<name>/work_auth.md`.
 - **Lead → case terminology**: a "lead" is a scored finding. When LJ
   decides to pursue it, `cases.slug_for(date, org, role)` returns a
   `YYYYMMDD-Company-Role` slug; `cases.make_case_dir(slug, ...)` creates
@@ -256,6 +290,15 @@ expectation → observation → investigation → regression-tested repair loop.
   Existing/recent applications and malformed crawler titles are reported, not
   duplicated. Use `prepare_cases.py --report <report> --dry-run` before a
   manual historical backfill.
+- **Agent-to-agent interview packs**: public protocol discovery and local
+  preparation use `YYYYMMDD-Company-Position-LoveWork-ATA/`. The marker
+  `LoveWork ATA status: PREPARED — interview not started` is ignored by
+  history/reapply logic. Preparation may fetch public role/API/SDK
+  documentation but may not authenticate, connect external accounts, start,
+  message, upload, commit, push, or submit. Runtime identity is host-specific:
+  preferred `macbook2 → hermeo → hermeo_lj_bot`, with
+  `gigul2 → hermel → hermel_lj_bot` allowed. Read
+  `docs/16-agent-to-agent-interviews.md` before advancing a case.
 
 ## Architecture (Phase-3-ready)
 
@@ -306,7 +349,7 @@ LLM ok: [Poolside] match: Member of Engineering Evaluations — 89 chars
 The three call sites are:
 - `[org] decision: <url>` — LLM deciding if a page has jobs and where to go next
 - `[org] extract: <url>` — LLM extracting structured job listings from a page
-- `[org] match: <job-title>` — LLM scoring a job against the candidate profile
+- `[org] match: <job-title>` — LLM scoring a job against the principal profile
 
 The raw httpx `200 OK` lines are noise from the HTTP library — ignore them
 or toggle with `LOG_LEVEL=WARNING` to suppress.
@@ -338,17 +381,26 @@ cd ~/Documents/LJ-work-2026/lovework/lovework-agent
 ../venv/bin/python3 dashboard_server.py [--port 8765]
 ```
 
-**Face 1 — dashboard HTML (human):** open `http://localhost:8765`. Sections:
-Runs / Jobs / Profiles / Entities / Sources / Reports / Config / System. Watch
-a crawl progress in real time (refresh the page), see latest GOs, or browse
-per-org history without grepping the wiki.
+**Face 1 — dashboard HTML (human):** open `http://localhost:8765`. The root
+is a master LAN index for published principal results, logs, run records,
+incidents, project docs, and APIs; the detailed live dashboard is
+`/dashboard/`. Its sections are Runs / Jobs / Profiles / Entities / Sources /
+Reports / Config / System. Watch a crawl progress in real time (refresh the
+page), see latest GOs, or browse per-org history without grepping the wiki.
+
+**Principal results on the LAN:** browse the deliberately narrow published
+views at `/principals/lj/wiki/reports/` and `/principals/vj/wiki/reports/`
+(for gigul2: `http://192.168.1.251:8765/...`).  `state/` itself is not served:
+only each principal's generated `wiki/`, wrapper `logs/`, compact run records,
+and incident records are exposed. This keeps source caches, Gmail-derived
+data, profiles, and datasets local.
 
 **Face 2 — MCP JSON-RPC (agent):** `POST http://127.0.0.1:8765/mcp` with a
 JSON-RPC 2.0 body. Implements `initialize` / `tools/list` / `tools/call`.
 Exposes 9 tools: `crawl_org`, `match_profile`, `search_jobs`, `check_history`,
 `fetch_url`, `update_wiki`, `registry_stats`, `run_python`, `run_pipeline`.
 Per-profile params (`profile_name` + `role`) so one server serves all four
-candidates. `run_pipeline` is long-running — set client timeout ≥600s for a
+principals. `run_pipeline` is long-running — set client timeout ≥600s for a
 full run. No `mcp`/`fastmcp` SDK dependency; JSON-RPC framing is hand-rolled
 in `mcp_server.py` (keeps the server launchd-safe).
 
@@ -454,7 +506,7 @@ fail silently.
 
 ## Refreshing this skill
 
-This skill (`agent/skills/lovework/SKILL.md`) is the canonical source. The
+This skill (`agents/skills/lovework/SKILL.md`) is the canonical source. The
 in-repo `.claude/skills/lovework/` and `.codex/skills/lovework/` are
 directory-level symlinks to it (auto-resolve). The per-host Hermes copies at
 `~/.hermes-<host>/skills/productivity/lovework/SKILL.md` are plain copies that

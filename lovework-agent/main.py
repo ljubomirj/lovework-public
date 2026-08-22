@@ -20,6 +20,7 @@ import logging
 import sys
 
 import config
+from principal_runtime import resolve_principal_runtime
 from job_registry import JobRegistry
 from pipeline import run_pipeline
 
@@ -46,12 +47,16 @@ def list_profiles() -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Personal job crawler")
-    parser.add_argument("--profile", default="lj", choices=["lj", "vj", "kj", "pk"], help="Candidate profile")
+    parser.add_argument("--profile", default="lj", choices=["lj", "vj", "kj", "pk"], help="Principal profile")
     parser.add_argument("--role", default=None, help="Specific role file under profiles/<name>/roles/")
-    parser.add_argument("--source", default="all", help="Source to run (all, research_orgs, neolabs, hf_startups, hn_hiring, hn_jobs, gmail_lj_jobs, linkedin_related, company_pages, harnham)")
+    parser.add_argument("--source", default="all", help="Source to run; available sources depend on --profile")
     parser.add_argument("--report", action="store_true", help="Generate markdown report")
     parser.add_argument("--json", action="store_true", help="Output findings as JSON to stdout")
-    parser.add_argument("--dry-run", action="store_true", help="Skip wiki writes")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Non-persistent preview; Gmail stays unread and state is untouched",
+    )
     parser.add_argument("--list-profiles", action="store_true", help="List available profiles/roles and exit")
     parser.add_argument("--registry-stats", action="store_true", help="Print job registry stats and exit")
     parser.add_argument("--dspy", action="store_true", help="Use DSPy typed signatures instead of legacy prompts")
@@ -62,7 +67,8 @@ def main():
         return
 
     if args.registry_stats:
-        registry = JobRegistry()
+        runtime = resolve_principal_runtime(args.profile)
+        registry = JobRegistry(runtime.cache_dir / "jobs.csv")
         print("Job registry stats:")
         for status, n in registry.stats().items():
             print(f"  {status}: {n}")
@@ -148,7 +154,11 @@ def main():
             print(f"\n⚠ Long-lasting (suspicious):")
             for e in sorted(long_lasting, key=lambda x: x.score, reverse=True)[:5]:
                 print(f"  [{e.score:.1f}] {e.org_name} — {e.title} (open since {e.first_seen})")
-        print(f"\nWiki: {config.WIKI_ROOT}")
+        if args.dry_run:
+            print("\nPreview only: no principal wiki or state was written.")
+        else:
+            runtime = resolve_principal_runtime(args.profile)
+            print(f"\nWiki: {runtime.wiki_root}")
 
 
 if __name__ == "__main__":

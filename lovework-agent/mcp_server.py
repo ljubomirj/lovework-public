@@ -71,7 +71,7 @@ TOOL_SCHEMAS: List[dict] = [
     {
         "name": "match_profile",
         "description": (
-            "Score a job listing against a candidate's profile. Returns "
+            "Score a job listing against a principal's profile. Returns "
             "fit/reach/flourish axes, combined score, action, legacy decision "
             "(GO/MAYBE/FLAG/DROP), and reasoning. Considers "
             "soul, CV (Layer 2), branching possibilities (Layer 3), role "
@@ -80,7 +80,7 @@ TOOL_SCHEMAS: List[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "profile_name": {"type": "string", "description": "Candidate profile: lj, kj, vj, or pk", "default": "lj"},
+                "profile_name": {"type": "string", "description": "Principal profile: lj, kj, vj, or pk", "default": "lj"},
                 "role": {"type": "string", "description": "Role file under profiles/<name>/roles/", "default": "general"},
                 "job_title": {"type": "string"},
                 "job_description": {"type": "string", "description": "1-3 sentence description"},
@@ -110,7 +110,7 @@ TOOL_SCHEMAS: List[dict] = [
     {
         "name": "check_history",
         "description": (
-            "Check if the candidate has prior contact with an organization. "
+            "Check if the principal has prior contact with an organization. "
             "Searches applications/ and Gmail. Use before recommending an "
             "application — re-applying to the same role within 6 months of a "
             "rejection is a DROP."
@@ -182,7 +182,7 @@ TOOL_SCHEMAS: List[dict] = [
     {
         "name": "run_pipeline",
         "description": (
-            "Trigger a LoveWork discovery pipeline run for a candidate. Crawls "
+            "Trigger a LoveWork discovery pipeline run for a principal. Crawls "
             "the selected source, scores every job against the profile, updates "
             "the registry + wiki, and writes a dated report. LONG-RUNNING: an "
             "incremental crawl is 3-15 min, a full run is 20-30 min. The call "
@@ -192,7 +192,7 @@ TOOL_SCHEMAS: List[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "profile_name": {"type": "string", "description": "Candidate: lj, kj, vj, pk", "default": "lj"},
+                "profile_name": {"type": "string", "description": "Principal: lj, kj, vj, pk", "default": "lj"},
                 "role": {"type": "string", "description": "Role file; default 'general'", "default": "general"},
                 "source": {"type": "string", "enum": ["all", "research_orgs", "neolabs", "hf_startups", "hn_hiring", "hn_jobs", "gmail_lj_jobs", "linkedin_related", "company_pages", "harnham"], "default": "all"},
                 "use_dspy": {"type": "boolean", "default": False},

@@ -25,9 +25,11 @@ alerts use source-specific parsers below.
 import logging
 import os
 import re
+from pathlib import Path
 from typing import List, Optional
 
 from job_registry import JobRegistry
+from lead_identity import is_noise_location, is_noise_title
 from matcher import JobMatcher
 from wiki_store import WikiEntry, match_fields
 
@@ -93,6 +95,8 @@ def classify_email(msg: dict) -> str:
         return "lensa_alert"
     if "alerts@johnsonjobs.com" in sender:
         return "johnsonjobs_alert"
+    if "cv-library.co.uk" in sender and "new" in subject:
+        return "cv_library_alert"
     return "other"
 
 
@@ -104,6 +108,15 @@ FOOTER_LINES = {
     "results from the new", "land your next role", "jobs that match your profile",
     "based on your title and location", "search for more related jobs",
 }
+
+
+# P3 — market gates at the boundary. The Lensa aggregator serves mostly US
+# job boards; for UK-based principals its listings are noise, not leads.
+# Off by default; set LOVEWORK_GMAIL_LENSA_ENABLED=1 to surface them again
+# (they still pass through the work-auth kill for explicit US-only roles).
+# Read at dispatch time (not import) so tests and operators can toggle it.
+def _lensa_enabled() -> bool:
+    return os.getenv("LOVEWORK_GMAIL_LENSA_ENABLED", "0") == "1"
 
 
 def is_boilerplate(title: str) -> bool:
@@ -152,7 +165,7 @@ def parse_linkedin_alerts(body: str) -> List[dict]:
             if "apply with resume" in line.lower() or "school alum" in line.lower():
                 continue
             if line.startswith("http"):
-                if not url and "linkedin.com/comm/jobs/view/" in line:
+                if not url and ("linkedin.com/comm/jobs/view/" in line or "linkedin.com/jobs/view/" in line):
                     url = line
                 continue
             if not title and len(line) > 3 and not line.startswith("http"):
@@ -669,27 +682,27 @@ def parse_jobserve_alerts(body: str) -> list[dict]:
         seen_urls.add(url)
 
         before = text[max(0, match.start() - 900):match.start()]
-        candidates = []
+        card_lines = []
         for line in before.splitlines()[-14:]:
             line = re.sub(r'\s+', ' ', line).strip(" -|•\t")
             low = line.lower()
             if len(line) < 3 or any(keyword in low for keyword in JOBSERVE_SKIP):
                 continue
-            candidates.append(line)
+            card_lines.append(line)
 
         title = anchor_titles.get(url, "")
         company = location = ""
         if title:
-            # The anchor title is normally the final candidate before its URL.
-            context = candidates[:-1] if candidates and candidates[-1] == title else candidates
+            # The anchor title is normally the final line before its URL.
+            context = card_lines[:-1] if card_lines and card_lines[-1] == title else card_lines
             if len(context) >= 2:
                 company, location = context[-2:]
             elif context:
                 company = context[-1]
-        elif len(candidates) >= 3:
-            title, company, location = candidates[-3:]
-        elif candidates:
-            title = candidates[-1]
+        elif len(card_lines) >= 3:
+            title, company, location = card_lines[-3:]
+        elif card_lines:
+            title = card_lines[-1]
 
         if title and not is_boilerplate(title):
             jobs.append({
@@ -741,26 +754,26 @@ def parse_johnsonjobs_alerts(body: str) -> list[dict]:
         seen_urls.add(url)
 
         before = text[max(0, match.start() - 900):match.start()]
-        candidates = []
+        card_lines = []
         for line in before.splitlines()[-14:]:
             line = re.sub(r'\s+', ' ', line).strip(" -|•\t")
             low = line.lower()
             if len(line) < 3 or any(keyword in low for keyword in JOHNSONJOBS_SKIP):
                 continue
-            candidates.append(line)
+            card_lines.append(line)
 
         title = anchor_titles.get(url, "")
         company = location = ""
         if title:
-            context = candidates[:-1] if candidates and candidates[-1] == title else candidates
+            context = card_lines[:-1] if card_lines and card_lines[-1] == title else card_lines
             if len(context) >= 2:
                 company, location = context[-2:]
             elif context:
                 company = context[-1]
-        elif len(candidates) >= 3:
-            title, company, location = candidates[-3:]
-        elif candidates:
-            title = candidates[-1]
+        elif len(card_lines) >= 3:
+            title, company, location = card_lines[-3:]
+        elif card_lines:
+            title = card_lines[-1]
 
         if title and not is_boilerplate(title):
             jobs.append({
@@ -769,6 +782,93 @@ def parse_johnsonjobs_alerts(body: str) -> list[dict]:
                 "location": location,
                 "url": url,
             })
+
+    return jobs
+
+
+# ── CV-Library alert parser ────────────────────────────────────────────────
+
+CV_LIBRARY_SKIP = {
+    "apply", "view more", "discover all matching", "search jobs", "edit alerts",
+    "unsubscribe", "preferences", "cv-library logo", "run search",
+    "hi ljubomir", "new jobs for you", "matching jobs for your alert",
+    "email footer", "all matching jobs", "cv-library email footer",
+    "run search", "today run search",
+}
+
+
+def parse_cv_library_alerts(body: str) -> list[dict]:
+    """Extract listings from a CV-Library job alert email.
+
+    CV-Library sends plain-text multipart emails with the format:
+
+        ****...****
+        Job Title (
+        https://clicks.cv-library.co.uk/f/a/TRACKING_ID
+        )
+        ****...****Location,
+        £salary
+        Apply  (
+        https://clicks.cv-library.co.uk/f/a/APPLY_ID
+        )Job Title Location: ... Description ...
+
+    Each job appears twice (compact + full).  We parse the first occurrence
+    and deduplicate by tracking URL.  Company names are not directly
+    embedded in CV-Library alert emails.
+    """
+    # Split on separator lines of 50+ consecutive `*` or `=` chars
+    blocks = re.split(r'\n[*=]{50,}\n', body)
+
+    jobs: list[dict] = []
+    seen_urls: set[str] = set()
+    # Minimum title length to filter out "jobs", "apply" etc.
+    MIN_TITLE_LEN = 12
+
+    for block in blocks:
+        lines = block.strip().split('\n')
+        # Clean whitespace
+        clean = [re.sub(r'\s+', ' ', l).strip() for l in lines]
+
+        for i in range(len(clean) - 2):
+            # Look for "Title (" then next line is a URL, then ")"
+            if (clean[i].endswith('(')
+                    and not clean[i].startswith('http')
+                    and clean[i + 1].startswith('http')
+                    and clean[i + 2] == ')'):
+                candidate_title = clean[i].rstrip(' (').strip()
+                candidate_url = clean[i + 1].rstrip(').,;')
+
+                # Must be a CV-Library clicks tracking URL
+                if 'clicks.cv-library.co.uk' not in candidate_url:
+                    continue
+                # Skip short boilerplate titles
+                if len(candidate_title) < MIN_TITLE_LEN:
+                    continue
+                low_title = candidate_title.lower()
+                if any(kw in low_title for kw in CV_LIBRARY_SKIP):
+                    continue
+
+                title = candidate_title
+                url = candidate_url
+
+                # Extract location from the line immediately after the closing ")"
+                # Format: "***...***City of London, London," or "***...***London,"
+                location = ""
+                after_close = i + 3  # line right after ")"
+                if after_close < len(clean):
+                    loc_candidate = re.sub(r'^\**', '', clean[after_close]).strip().rstrip(',')
+                    if loc_candidate and len(loc_candidate) < 80:
+                        location = loc_candidate
+
+                if url not in seen_urls:
+                    seen_urls.add(url)
+                    jobs.append({
+                        "title": title,
+                        "company": "CV-Library listing",
+                        "location": location,
+                        "url": url,
+                    })
+                break
 
     return jobs
 
@@ -793,10 +893,8 @@ def is_obvious_nonfit(title: str, company: str = "") -> bool:
 
 # ── Source ─────────────────────────────────────────────────────────────────
 
-class GmailLjJobsSource:
-    """Ingests supported job alerts from the Gmail LJ-jobs inbox."""
-
-    name = "gmail_lj_jobs"
+class GmailJobsSource:
+    """Ingest supported job alerts from one principal-approved Gmail label."""
 
     def __init__(
         self,
@@ -805,22 +903,40 @@ class GmailLjJobsSource:
         registry: Optional[JobRegistry] = None,
         max_emails: int = MAX_EMAILS,
         mark_read: bool = MARK_READ,
+        *,
+        label: str = GMAIL_LJ_JOBS_LABEL,
+        credential_home: Optional[Path] = None,
+        source_name: str = "gmail_jobs",
+        sources_dir: Optional[Path] = None,
+        capture_seeds: bool = CAPTURE_GMAIL_SEEDS,
     ):
         self.matcher = matcher
         self.registry = registry
         self.max_emails = max_emails
         self.mark_read = mark_read
+        self.label = label
+        self.credential_home = credential_home
+        self.name = source_name
+        self.sources_dir = sources_dir
+        self.capture_seeds = capture_seeds
+
+    def _gapi(self, *args):
+        """Call Gmail without changing legacy test and LJ call signatures."""
+        if self.credential_home is None:
+            return run_gapi(*args)
+        return run_gapi(*args, credential_home=self.credential_home)
 
     def run(self) -> List[WikiEntry]:
         entries: List[WikiEntry] = []
 
-        messages = run_gapi("gmail", "search", f"label:{GMAIL_LJ_JOBS_LABEL} is:unread",
-                             "--max", str(self.max_emails))
+        messages = self._gapi(
+            "gmail", "search", f"label:{self.label} is:unread", "--max", str(self.max_emails)
+        )
         if not messages:
-            logger.info(f"[{self.name}] No unread LJ-jobs emails (or Gmail unavailable).")
+            logger.info(f"[{self.name}] No unread {self.label} emails (or Gmail unavailable).")
             return entries
 
-        logger.info(f"[{self.name}] {len(messages)} unread LJ-jobs email(s) to process")
+        logger.info(f"[{self.name}] {len(messages)} unread {self.label} email(s) to process")
         for msg in messages:
             try:
                 entries.extend(self._process_email(msg))
@@ -843,6 +959,7 @@ class GmailLjJobsSource:
         "jobserve_admin":     (None,                      None,                            False),
         "lensa_alert":        (parse_lensa_alerts,         None,                            True),
         "johnsonjobs_alert":  (parse_johnsonjobs_alerts,   None,                            True),
+        "cv_library_alert":   (parse_cv_library_alerts,    None,                            True),
     }
 
     def _process_email(self, msg: dict) -> List[WikiEntry]:
@@ -860,11 +977,11 @@ class GmailLjJobsSource:
             # E.g. linkedin_app_sent — prior-contact signals, not leads.
             pass
         elif parser_fn is not None:
-            body_resp = run_gapi("gmail", "get", msg_id)
+            body_resp = self._gapi("gmail", "get", msg_id)
             body = (body_resp or {}).get("body", "") if isinstance(body_resp, dict) else ""
             if body:
                 raw_jobs = parser_fn(body)
-                if CAPTURE_GMAIL_SEEDS and seed_extractor_fn is not None:
+                if self.capture_seeds and seed_extractor_fn is not None:
                     try:
                         search_url = seed_extractor_fn(body)
                         if search_url:
@@ -873,7 +990,30 @@ class GmailLjJobsSource:
                         logger.debug(f"[{self.name}] seed capture failed: {e}")
 
         produced: List[WikiEntry] = []
+        # P3 — market gates at the boundary: Lensa is a US-market noise
+        # source. When disabled, consume the email (mark read) but produce
+        # no leads — the listings are not worth scoring for a UK principal.
+        if category == "lensa_alert" and not _lensa_enabled():
+            if self.mark_read and msg_id:
+                self._gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
+            logger.info(f"[{self.name}] Lensa disabled (US-market noise); consumed {category} {msg_id} without leads")
+            return []
         for job in raw_jobs:
+            # P2 — identity integrity: the title must be the role title and
+            # the location a place. Drop subjects, salary strings, dates,
+            # and mis-split prose at the source instead of scoring them.
+            if is_noise_title(job["title"]):
+                logger.info(
+                    f"[{self.name}] dropped noise title from {category}: "
+                    f"{job['title'][:80]!r}"
+                )
+                continue
+            if is_noise_location(job.get("location", "")):
+                logger.info(
+                    f"[{self.name}] dropped noise location from {category}: "
+                    f"{job['location'][:80]!r}"
+                )
+                continue
             if is_obvious_nonfit(job["title"], job.get("company", "")):
                 continue
             entry = self._make_entry(
@@ -893,18 +1033,23 @@ class GmailLjJobsSource:
                 "leaving it unread"
             )
         if self.mark_read and msg_id and parsed_successfully:
-            run_gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
+            self._gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
         return produced
 
     def _save_seed(self, category: str, search_url: str):
         """Save a seed URL for related-ads harvesting."""
         if category.startswith("linkedin"):
             from .linkedin_related import append_seed
-            append_seed(search_url)
+            seeds_path = (
+                self.sources_dir / "linkedin_seeds.md" if self.sources_dir is not None else None
+            )
+            append_seed(search_url, seeds_path=seeds_path)
         else:
             import config
-            seed_file = config.PROFILES_DIR / "lj" / f"{category}_seeds.md"
+            seed_dir = self.sources_dir or (config.PROFILES_DIR / "lj")
+            seed_file = seed_dir / f"{category}_seeds.md"
             try:
+                seed_file.parent.mkdir(parents=True, exist_ok=True)
                 with open(seed_file, "a") as f:
                     f.write(f"{search_url}\n")
                 logger.info(f"[{self.name}] Saved {category} seed: {search_url[:80]}...")
@@ -942,3 +1087,15 @@ class GmailLjJobsSource:
             entry.lifecycle_status = record.status
             entry.first_seen = record.first_seen
         return entry
+
+
+class GmailLjJobsSource(GmailJobsSource):
+    """Legacy LJ source kept for existing callers and registry provenance."""
+
+    name = "gmail_lj_jobs"
+
+    def __init__(self, *args, **kwargs):
+        if kwargs.get("label") is None:
+            kwargs["label"] = GMAIL_LJ_JOBS_LABEL
+        kwargs.setdefault("source_name", self.name)
+        super().__init__(*args, **kwargs)

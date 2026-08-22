@@ -95,7 +95,7 @@ def gapi_python() -> str:
     return _PY_CACHE
 
 
-def run_gapi(*args) -> Optional[object]:
+def run_gapi(*args, credential_home: Optional[Path] = None) -> Optional[object]:
     """Run google_api.py with the resolved interpreter; return parsed JSON stdout or None.
 
     Returns None on any failure (script missing, non-zero exit, bad JSON, timeout) so
@@ -105,13 +105,18 @@ def run_gapi(*args) -> Optional[object]:
     # scripts resolve their token from $HERMES_HOME and otherwise default to
     # ~/.hermes (the root/default profile). Propagate LoveWork's resolved
     # profile so the script reads that profile's OAuth token too.
-    hermes_home = resolve_hermes_home()
+    runtime_hermes_home = resolve_hermes_home()
     script = gapi_path()
     if not script.exists():
         logger.debug(f"[gmail] google_api.py not found: {script}")
         return None
     env = os.environ.copy()
-    env["HERMES_HOME"] = str(hermes_home)
+    # The Hermes profile selects the helper script. A principal's approved
+    # mailbox credential may be elsewhere, so only the helper subprocess gets
+    # its token home overridden. The parent LoveWork/Hermes runtime identity is
+    # unchanged.
+    token_home = credential_home if credential_home is not None else runtime_hermes_home
+    env["HERMES_HOME"] = str(token_home)
     try:
         result = subprocess.run(
             [gapi_python(), str(script), *args],

@@ -27,6 +27,22 @@ logger = logging.getLogger(__name__)
 MAX_PRIMARY_CHARS = 20_000
 MIN_USEFUL_CHARS = 400
 ENRICHMENT_VERSION = "v2"
+# P5 — liveness is a lifecycle fact. These markers on the primary advert page
+# mean the role is dead; enrichment flags it and the matcher drops it before
+# any scoring. The Arsenal FC case (careers page: "This position is no longer
+# active") is the canonical regression.
+EXPIRY_MARKERS = (
+    "no longer active",
+    "position has been filled",
+    "this position is no longer active",
+    "this role is no longer",
+    "job has expired",
+    "advert has expired",
+    "no longer accepting applications",
+    "position filled",
+    "vacancy closed",
+    "we are no longer hiring",
+)
 _NEXT_PUSH_RE = re.compile(
     r"self\.__next_f\.push\((?P<payload>.*?)\)</script>", re.DOTALL
 )
@@ -118,6 +134,11 @@ class EnrichedLead:
     primary_content_hash: str = ""
     primary_fetched_at: str = ""
     primary_fetch_method: str = ""
+    # P5 — liveness. True when the primary page carries an expiry marker
+    # ("no longer active", "position filled", ...). The matcher must drop
+    # the lead before scoring, and the report must not surface it.
+    expired: bool = False
+    expiry_evidence: str = ""
 
     @property
     def matcher_description(self) -> str:
@@ -133,15 +154,26 @@ class EnrichedLead:
 class LeadEnricher:
     """Fetch and cache one primary advert page for each matchable lead."""
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        cache_dir: Optional[Path] = None,
+        crawler_cache_dir: Optional[Path] = None,
+    ):
         self.cache_dir = cache_dir or config.CACHE_DIR / "enrichment"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.crawler_cache_dir = crawler_cache_dir
 
     def _cache_path(self, url: str) -> Path:
         digest = hashlib.sha256(f"{ENRICHMENT_VERSION}:{url}".encode()).hexdigest()[:24]
         return self.cache_dir / f"{digest}.json"
 
-    def enrich(self, description: str, url: str) -> EnrichedLead:
+    def load_cached(self, description: str, url: str) -> EnrichedLead:
+        """Return retained primary evidence without ever fetching the network.
+
+        Historical reassessment deliberately uses this method.  It is safe to
+        run against an existing registry because it cannot crawl, alter a
+        source, or discover a newer advert version.
+        """
         result = EnrichedLead(original_description=description, primary_url=url)
         parsed = urlparse(url or "")
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -159,6 +191,17 @@ class LeadEnricher:
             except (OSError, json.JSONDecodeError, TypeError):
                 logger.warning("Ignoring invalid enrichment cache for %s", url)
 
+        return result
+
+    def enrich(self, description: str, url: str) -> EnrichedLead:
+        result = self.load_cached(description, url)
+        if result.primary_text:
+            return result
+
+        parsed = urlparse(url or "")
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return result
+
         text, method = self._fetch(url)
         if text:
             result.primary_text = text[:MAX_PRIMARY_CHARS]
@@ -167,7 +210,17 @@ class LeadEnricher:
             ).hexdigest()
             result.primary_fetched_at = datetime.now(timezone.utc).isoformat()
             result.primary_fetch_method = method
+            # P5 — liveness: an expiry marker on the primary page means the
+            # lead is dead. Flag it (matcher drops) and do not cache it as
+            # reusable live evidence.
+            marker = _expiry_marker(text)
+            if marker:
+                result.expired = True
+                result.expiry_evidence = marker
+                logger.info("Primary page for %s is expired (marker: %r)", url, marker)
+                return result
             try:
+                cache_path = self._cache_path(url)
                 cache_path.write_text(
                     json.dumps(asdict(result), ensure_ascii=False, indent=2) + "\n",
                     encoding="utf-8",
@@ -190,6 +243,15 @@ class LeadEnricher:
             text = extract_html_text(response.text)
             if len(text) >= MIN_USEFUL_CHARS:
                 logger.info("Primary-page HTTP enrichment %s (%d chars)", url, len(text))
+                # P6 — discovery must resolve to the actual advert. Social
+                # posts (X/Twitter) bury the real link in the first reply /
+                # an embedded short link (t.co). If the fetched page is a
+                # social post carrying a job link, follow it and use the
+                # advert page's text instead — expiry markers (P5) then
+                # apply to the *resolved* page, not the post.
+                resolved = self._follow_social_link(url, text)
+                if resolved:
+                    return resolved, "http-via-post"
                 return text, "http"
         except Exception as exc:
             logger.info("Primary-page HTTP enrichment failed for %s: %s", url, exc)
@@ -198,12 +260,68 @@ class LeadEnricher:
         try:
             from crawler import fetch_page
 
-            text = fetch_page(url, use_cache=True)
+            text = fetch_page(url, use_cache=True, cache_dir=self.crawler_cache_dir)
             if text:
                 return text[:MAX_PRIMARY_CHARS], "firecrawl"
         except Exception as exc:
             logger.warning("Primary-page fallback failed for %s: %s", url, exc)
         return "", ""
+
+    def _follow_social_link(self, post_url: str, post_text: str) -> Optional[str]:
+        """Follow a job link embedded in a social post (X first-reply / t.co).
+
+        X/Twitter downgrades posts that carry links, so the actual advert
+        link is usually in the first reply or an embedded ``t.co`` short
+        link. Extract the first external link from the post text and fetch
+        that page; if it is a real advert page (not the social site), return
+        its text. Returns None when the post has no resolvable link.
+        """
+        post_host = urlparse(post_url).netloc.lower()
+        m = re.search(r"https?://[^\s)\"'>]+", post_text or "")
+        if not m:
+            return None
+        candidate = m.group(0).rstrip(".,;")
+        candidate_host = urlparse(candidate).netloc.lower()
+        if candidate_host == post_host or "x.com" in candidate_host or "twitter.com" in candidate_host:
+            return None
+        try:
+            import httpx
+
+            response = httpx.get(
+                candidate,
+                timeout=30,
+                follow_redirects=True,
+                headers={"User-Agent": "lovework-agent/1.0 (+https://lovework.be)"},
+            )
+            response.raise_for_status()
+            resolved_text = extract_html_text(response.text)
+            # A short resolved page is still the truth when it says the role
+            # is gone (P5 expiry markers) — keep it so the liveness check
+            # runs on the actual advert page, not the post.
+            if len(resolved_text) >= MIN_USEFUL_CHARS or _expiry_marker(resolved_text):
+                logger.info(
+                    "Resolved social-post link %s -> %s (%d chars)",
+                    post_url, candidate, len(resolved_text),
+                )
+                return resolved_text[:MAX_PRIMARY_CHARS]
+        except Exception as exc:
+            logger.info("Social-link resolution failed for %s: %s", candidate, exc)
+        return None
+
+
+def _expiry_marker(text: str) -> str:
+    """Return the first expiry marker found in primary-page text, else ''.
+
+    P5 — liveness is a lifecycle fact. Cheap lowercase substring scan; the
+    markers are deliberately specific phrases, not bare words, to avoid
+    false positives on "we are no longer hiring for Q4" type copy that
+    refers to the future.
+    """
+    lowered = (text or "").lower()
+    for marker in EXPIRY_MARKERS:
+        if marker in lowered:
+            return marker
+    return ""
 
 
 class EnrichingMatcher:
@@ -222,6 +340,20 @@ class EnrichingMatcher:
         location: str = "",
     ):
         evidence = self.enricher.enrich(job_description, job_url)
+        # P5 — liveness is a lifecycle fact: an expired advert is dropped
+        # before any LLM scoring; it must never surface as a GO/MAYBE.
+        if evidence.expired:
+            from matcher import MatchResult
+
+            return MatchResult(
+                fit_score=0.0, reach_score=0.0, flourish_score=0.0,
+                combined_score=0.0, score=0.0, decision="DROP",
+                recommended_action="DROP",
+                reasoning=(
+                    f"AUTO-DROP: advert expired (primary page marker "
+                    f"{evidence.expiry_evidence!r}). {job_url}"
+                ),
+            )
         result = self.matcher.match(
             job_title,
             evidence.matcher_description,

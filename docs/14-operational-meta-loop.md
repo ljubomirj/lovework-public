@@ -56,7 +56,7 @@ This is self-maintenance at the **harness** level: the loop is fixed and
 inspectable; its knowledge, tests, and safe repair playbook improve over time.
 It is deliberately not an unrestricted self-modifying agent.
 
-## Current implementation: full-crawl contract
+## Current implementation: principal-owned full-crawl contracts
 
 `lovework-crawl.sh` is the worker-owned source of truth.  Before it starts the
 pipeline, it writes `run_ledger.py start`; after the crawl and manual succeed,
@@ -64,7 +64,8 @@ it writes `finish` with the report path. `notify.py` uses the active Hermes
 profile's Gmail API with `--body` and accepts success only when Gmail returns a
 sent-message ID. That ID is persisted with the run record.
 
-HermeL runs `lovework-full-watchdog.sh` at 13:30 and 15:00 each Sunday.  The
+HermeL runs `lovework-full-watchdog.sh` at 13:30 and 15:00 each Sunday for LJ,
+and `lovework-vj-full-watchdog.sh` at the same times each Saturday for VJ. The
 first check catches a completed crawl with a missing notification promptly;
 the second catches a crawl that was still running at the first check but later
 failed or exceeded its 5.5-hour bound. Empty output is intentional silence;

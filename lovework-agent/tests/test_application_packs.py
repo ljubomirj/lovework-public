@@ -57,6 +57,49 @@ def test_prepared_case_is_not_a_history_application(tmp_path):
     assert scan_applications("Example AI", applications_dir=tmp_path) == []
 
 
+def test_default_root_is_principal_state_and_mirrors_unified_view(tmp_path, monkeypatch):
+    import config as lw_config
+
+    # conftest's autouse isolated_config fixture already created tmp_path/applications
+    # and pointed LOVEWORK_APPLICATIONS_DIR at it; add the principal state root.
+    state_root = tmp_path / "state"
+    (state_root / "lj" / "applications").mkdir(parents=True)
+    unified = tmp_path / "applications"
+    monkeypatch.setattr(lw_config, "STATE_DIR", state_root)
+    monkeypatch.setattr(lw_config, "APPLICATIONS_DIR", unified)
+
+    created = prepare_go_cases([_go()], today=date(2026, 7, 19), only_new=False)
+
+    assert created[0].status == "created"
+    pack = created[0].path
+    assert pack.parent == state_root / "lj" / "applications"
+    assert pack.name.endswith("-LoveWork")
+    assert pack.is_dir()
+    # Parent unified view mirrors the state-owned pack as a relative symlink.
+    link = unified / pack.name
+    assert link.is_symlink()
+    assert link.resolve() == pack
+    # Re-run stays idempotent and does not duplicate the mirror.
+    repeated = prepare_go_cases([_go()], today=date(2026, 7, 19), only_new=False)
+    assert repeated[0].status == "existing"
+    assert len(list(unified.glob("*-LoveWork"))) == 1
+
+
+def test_explicit_cases_root_does_not_touch_unified_view(tmp_path, monkeypatch):
+    import config as lw_config
+
+    unified = tmp_path / "applications"
+    monkeypatch.setattr(lw_config, "APPLICATIONS_DIR", unified)
+
+    created = prepare_go_cases(
+        [_go()], cases_root=tmp_path / "cases", today=date(2026, 7, 19), only_new=False
+    )
+
+    assert created[0].status == "created"
+    assert created[0].path.parent == tmp_path / "cases"
+    assert list(unified.glob("*-LoveWork")) == []
+
+
 def test_recent_real_application_skips_semantically_similar_pack(tmp_path):
     existing = tmp_path / "20260707-Example_AI-Senior_AI_Engineer"
     existing.mkdir()

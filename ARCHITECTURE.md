@@ -34,7 +34,7 @@ Opportunity sources
 
 ### Sources
 
-Sources discover candidate opportunities. Some are generic public adapters;
+Sources discover principal opportunities. Some are generic public adapters;
 others may be private integrations configured by an individual. A common
 interface allows new sources to be added without changing the rest of the
 pipeline.

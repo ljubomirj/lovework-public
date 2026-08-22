@@ -112,7 +112,7 @@ def crawl_org_tool_factory(crawler: SmartCrawler) -> AgentTool:
 # ── Tool: match_profile ─────────────────────────────────────────────────
 
 def match_profile_tool_factory(matcher: JobMatcher) -> AgentTool:
-    """Tool: score a job against a candidate's profile."""
+    """Tool: score a job against a principal's profile."""
     async def execute(tool_call_id: str, params: Dict[str, Any], abort_event=None, on_update=None) -> AgentToolResult:
         job_title = params.get("job_title", "")
         job_description = params.get("job_description", "")
@@ -149,10 +149,10 @@ def match_profile_tool_factory(matcher: JobMatcher) -> AgentTool:
         name="match_profile",
         label="Match against profile",
         description=(
-            "Score a job listing against a candidate's profile. "
+            "Score a job listing against a principal's profile. "
             "Returns fit/reach/flourish axes, combined score, action, "
             "legacy decision (GO/MAYBE/FLAG/DROP), and reasoning. "
-            "Considers the candidate's soul, CV, role-specific criteria, "
+            "Considers the principal's soul, CV, role-specific criteria, "
             "job lifecycle status, and prior contact with the org."
         ),
         execute=execute,
@@ -262,7 +262,7 @@ def check_history_tool_factory() -> AgentTool:
         name="check_history",
         label="Check prior contact",
         description=(
-            "Check if the candidate has prior contact with an organization. "
+            "Check if the principal has prior contact with an organization. "
             "Searches applications/ and Gmail. Use this before recommending "
             "an application — re-applying to the same role within 6 months "
             "of a rejection is a DROP."

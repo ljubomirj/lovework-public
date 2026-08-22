@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import run_ledger
+from principal_runtime import resolve_principal_runtime
 from config import CACHE_DIR
 
 INCIDENTS_DIR = CACHE_DIR / "incidents"
@@ -37,12 +38,12 @@ def _parse_time(value: str) -> tuple[int, int]:
 def expected_run_at(now: datetime, weekday: int, schedule_time: str) -> datetime:
     """Return the most recent scheduled local time, including today if due."""
     hour, minute = _parse_time(schedule_time)
-    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-    days_back = (candidate.weekday() - weekday) % 7
-    candidate -= timedelta(days=days_back)
-    if candidate > now:
-        candidate -= timedelta(days=7)
-    return candidate
+    scheduled = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    days_back = (scheduled.weekday() - weekday) % 7
+    scheduled -= timedelta(days=days_back)
+    if scheduled > now:
+        scheduled -= timedelta(days=7)
+    return scheduled
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -86,7 +87,7 @@ def reconcile(
         return {"ok": True, "state": "not_due", "expected_at": expected_at.isoformat()}
 
     next_expected_at = expected_at + timedelta(days=7)
-    candidate = _matching_run(
+    matching_run = _matching_run(
         records if records is not None else run_ledger.list_runs(run_type),
         expected_at,
         next_expected_at,
@@ -96,32 +97,32 @@ def reconcile(
         "run_type": run_type,
         "expected_at": expected_at.isoformat(),
         "checked_at": current.isoformat(),
-        "run": candidate,
+        "run": matching_run,
     }
-    if candidate is None:
+    if matching_run is None:
         return base | {
             "state": "missing_start",
             "summary": f"Expected {run_type} run did not start after {expected_at.isoformat()}.",
         }
-    if candidate.get("status") == "running":
-        started_at = _parse_iso(candidate.get("started_at"))
+    if matching_run.get("status") == "running":
+        started_at = _parse_iso(matching_run.get("started_at"))
         if started_at and current - started_at > max_runtime:
             return base | {
                 "state": "overdue",
                 "summary": f"{run_type} run exceeded the {max_runtime} runtime limit.",
             }
-        return {"ok": True, "state": "running", "expected_at": expected_at.isoformat(), "run": candidate}
-    if candidate.get("status") == "failed":
+        return {"ok": True, "state": "running", "expected_at": expected_at.isoformat(), "run": matching_run}
+    if matching_run.get("status") == "failed":
         return base | {
             "state": "crawl_failed",
-            "summary": f"{run_type} crawl failed: {candidate.get('error') or 'no error recorded'}",
+            "summary": f"{run_type} crawl failed: {matching_run.get('error') or 'no error recorded'}",
         }
-    if candidate.get("status") != "succeeded" or not candidate.get("report_file"):
+    if matching_run.get("status") != "succeeded" or not matching_run.get("report_file"):
         return base | {
             "state": "incomplete_terminal_record",
             "summary": f"{run_type} run lacks a complete successful terminal record.",
         }
-    notification = candidate.get("notification") or {}
+    notification = matching_run.get("notification") or {}
     if notification.get("status") != "sent" or not notification.get("message_id"):
         return base | {
             "state": "notification_unresolved",
@@ -131,7 +132,7 @@ def reconcile(
         "ok": True,
         "state": "resolved",
         "expected_at": expected_at.isoformat(),
-        "run": candidate,
+        "run": matching_run,
     }
 
 
@@ -215,6 +216,13 @@ def claim_investigation(incident_path: Path) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Reconcile a scheduled LoveWork run")
     parser.add_argument("--run-type", required=True, choices=("full", "incremental"))
+    parser.add_argument(
+        "--principal",
+        "--candidate",
+        dest="principal",
+        default="lj",
+        help="Principal whose state and run ledger to reconcile (legacy --candidate accepted)",
+    )
     parser.add_argument("--weekday", required=True, type=int, help="Monday=0 … Sunday=6")
     parser.add_argument("--time", required=True, help="Local schedule time, HH:MM")
     parser.add_argument("--grace-minutes", type=int, default=15)
@@ -226,18 +234,22 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    runtime = resolve_principal_runtime(args.principal)
+    runs_dir = runtime.cache_dir / "runs"
+    incidents_dir = runtime.cache_dir / "incidents"
     result = reconcile(
         run_type=args.run_type,
         weekday=args.weekday,
         schedule_time=args.time,
         grace=timedelta(minutes=args.grace_minutes),
         max_runtime=timedelta(minutes=args.max_runtime_minutes),
+        records=run_ledger.list_runs(args.run_type, runs_dir=runs_dir),
     )
     if result["ok"]:
         if args.wake_agent_gate:
             print(json.dumps({"wakeAgent": False}))
         return 0
-    json_path, markdown_path = write_incident(result)
+    json_path, markdown_path = write_incident(result, incidents_dir=incidents_dir)
     if args.wake_agent_gate:
         wake_agent = claim_investigation(json_path)
         payload = {

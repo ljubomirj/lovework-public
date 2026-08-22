@@ -12,7 +12,7 @@ See [`../README.md`](../README.md) for the project overview and
 ```bash
 ../venv/bin/python3 main.py --profile lj --role general --source all --report
 ../venv/bin/python3 main.py --profile lj --role cofounder --source neolabs --report
-../venv/bin/python3 main.py --profile vj --role platform-sre --source all
+../venv/bin/python3 main.py --profile vj --role data-statistics-pricing --source all
 ../venv/bin/python3 main.py --list-profiles
 ../venv/bin/python3 main.py --registry-stats
 ../venv/bin/python3 main.py --dspy --profile lj --role general  # use DSPy
@@ -30,7 +30,7 @@ See [`../README.md`](../README.md) for the project overview and
 ## Flags
 
 ### `main.py` (autonomous)
-- `--profile {lj,vj,kj,pk}` — which candidate profile
+- `--profile {lj,vj,kj,pk}` — which principal profile
 - `--role ROLE` — specific role file under `profiles/<name>/roles/`
 - `--source {all,research_orgs,neolabs,hf_startups,hn_hiring,hn_jobs,gmail_lj_jobs,linkedin_related,company_pages,harnham}` — data source
 - `--report` — generate markdown report
@@ -41,7 +41,7 @@ See [`../README.md`](../README.md) for the project overview and
 - `--registry-stats` — print job registry stats
 
 ### `agent_main.py` (interactive)
-- `--profile {lj,vj,kj,pk}` — which candidate profile
+- `--profile {lj,vj,kj,pk}` — which principal profile
 - `--role ROLE` — specific role file
 - `--query QUERY` — single query, non-interactive
 - `--autonomous` — run the full pipeline (same as `main.py`)

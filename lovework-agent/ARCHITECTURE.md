@@ -186,7 +186,7 @@ Because it lets us swap providers without code changes:
 
 **File:** `matcher.py:74-115`
 
-**What:** Score a job 0-10 against the candidate's profile, with prior-contact and lifecycle context.
+**What:** Score a job 0-10 against the principal's profile, with prior-contact and lifecycle context.
 
 **Input:** profile, job_title, job_description, org_name, job_url, additional_context
 **Output:** `MatchResult(score, decision, reasoning)`
@@ -259,7 +259,7 @@ Each tool is registered with:
 ### Agent's system prompt
 
 `agent.py:_system_prompt()` builds the system prompt that tells the LLM:
-- Who the candidate is (profile)
+- Who the principal is (profile)
 - What tools are available
 - The mission (LoveWork)
 - The heuristics (UK-based, recent, no re-apply within 6 months)
@@ -485,8 +485,8 @@ The DSPy signatures are unoptimised. With a metric and a labelled set, we can:
 If open-sourced:
 - `ljubomir/lovework` on GitHub (or whatever name we settle on)
 - `pip install lovework` on PyPI
-- **Hosted service** — managed cron, hosted LLM proxy, dashboard, $20-50/mo per candidate
-- **Profile consulting** — help candidates write their `soul.md` (the art is in the profile)
+- **Hosted service** — managed cron, hosted LLM proxy, dashboard, $20-50/mo per principal
+- **Profile consulting** — help principals write their `soul.md` (the art is in the profile)
 - **Custom sources** — LinkedIn API, Greenhouse webhooks, etc.
 - **Application drafting** — auto-generate cover letters, tailored CVs (next step after "find")
 

@@ -13,7 +13,7 @@ See https://dspy.ai for the full model.
 Signatures:
 - CrawlDecision: where to crawl next on a careers site
 - ExtractJobs: pull structured listings from a page with jobs
-- MatchJob: score a job against the candidate's profile
+- MatchJob: score a job against the principal's profile
 """
 
 import logging
@@ -77,7 +77,7 @@ class ExtractJobs(dspy.Signature):
 # ── MatchJob ────────────────────────────────────────────────────────────
 
 class MatchJob(dspy.Signature):
-    """Score a job listing against a candidate's profile.
+    """Score a job listing against a principal's profile.
 
     Returns three independent 0-10 axes:
     - fit_score: skill/intellectual alignment
@@ -88,8 +88,8 @@ class MatchJob(dspy.Signature):
     - Long-lasting jobs (open >30 days) score 1-2 lower
     - Prior rejection for same role within 6 months = DROP
     - "New" status = fresh opportunity, no penalty
-    - If the role aligns with one of the candidate's explicit branching
-      possibilities (in the profile's CANDIDATE POSSIBILITIES section), add +1
+    - If the role aligns with one of the principal's explicit branching
+      possibilities (in the profile's PRINCIPAL POSSIBILITIES section), add +1
       and name the branch letter (e.g. "(a)", "(g)") in the reasoning.
     - Small/early startups are more reachable than star-researcher labs. Rare
       direct-domain experience plus a shipped/demoed artifact should normally
@@ -98,7 +98,7 @@ class MatchJob(dspy.Signature):
       [CONCRETE ARTIFACT] must lead the application angle.
     """
 
-    profile: str = dspy.InputField(desc="The candidate's profile (soul + CV + branching possibilities + role criteria)")
+    profile: str = dspy.InputField(desc="The principal's profile (soul + CV + branching possibilities + role criteria)")
     job_title: str = dspy.InputField(desc="The job title")
     job_description: str = dspy.InputField(desc="1-3 sentence description of the role")
     org_name: str = dspy.InputField(desc="Name of the hiring organisation")
@@ -112,10 +112,10 @@ class MatchJob(dspy.Signature):
     reach_score: float = dspy.OutputField(desc="Realistic screening odds, 0.0-10.0")
     flourish_score: float = dspy.OutputField(desc="Day-to-day enjoyment, 0.0-10.0")
     prestige_trap_risk: str = dspy.OutputField(desc="One of: low, medium, high")
-    screening_story: str = dspy.OutputField(desc="How the candidate might, or might not, get through screening")
+    screening_story: str = dspy.OutputField(desc="How the principal might, or might not, get through screening")
     likely_day_to_day: str = dspy.OutputField(desc="What the actual work likely feels like")
-    alignment_matrix: list[str] = dspy.OutputField(desc="3-6 job need -> candidate evidence alignments")
-    gaps: list[str] = dspy.OutputField(desc="Material requirements with no supplied candidate evidence")
+    alignment_matrix: list[str] = dspy.OutputField(desc="3-6 job need -> principal evidence alignments")
+    gaps: list[str] = dspy.OutputField(desc="Material requirements with no supplied principal evidence")
     application_angle: str = dspy.OutputField(desc="Specific truthful application narrative from strongest evidence")
     reasoning: str = dspy.OutputField(desc="Brief explanation tying the three axes together")
 

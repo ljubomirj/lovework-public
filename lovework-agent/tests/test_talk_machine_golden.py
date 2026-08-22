@@ -1,7 +1,7 @@
 """Golden regression for the July 2026 Talk Machine lead."""
 
 import config
-from candidate_evidence import CandidateEvidenceIndex, EvidenceGroundedMatcher
+from principal_evidence import PrincipalEvidenceIndex, EvidenceGroundedMatcher
 from enrichment import EnrichedLead, EnrichingMatcher
 from matcher import MatchResult
 
@@ -19,7 +19,7 @@ development close to users.
 def test_talk_machine_retrieves_lj_speech_product_and_small_team_evidence():
     profile = config.load_profile_text("lj", role="general")
     bio = config.load_bio("lj")
-    index = CandidateEvidenceIndex(profile, bio)
+    index = PrincipalEvidenceIndex(profile, bio)
     evidence = index.format_for_matcher(TALK_MACHINE_COPY, limit=10)
 
     assert "speech recognition" in evidence.lower()
@@ -65,7 +65,7 @@ def test_talk_machine_full_evidence_contract_supports_high_score():
 
     profile = config.load_profile_text("lj", role="general")
     matcher = EvidenceGroundedMatcher(
-        ContractMatcher(), CandidateEvidenceIndex(profile, config.load_bio("lj"))
+        ContractMatcher(), PrincipalEvidenceIndex(profile, config.load_bio("lj"))
     )
     matcher = EnrichingMatcher(matcher, FixedEnricher())
     result = matcher.match(

@@ -112,7 +112,7 @@ class HFStartupsSource:
                     goal=(
                         "Find open technical positions at this AI-for-finance startup. "
                         "Look for: ML engineer, AI researcher, quant researcher, data scientist, "
-                        "founding engineer, or similar. Be mindful: this is for a candidate who wants "
+                        "founding engineer, or similar. Be mindful: this is for a principal who wants "
                         "ML/AI research roles, NOT pure trading execution or portfolio management."
                     ),
                     max_pages=3,

@@ -26,6 +26,8 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
+from lead_identity import is_implausible_header
+
 logger = logging.getLogger(__name__)
 
 # HN Algolia API base — no auth, no rate limit issues for our use.
@@ -312,6 +314,12 @@ def parse_hn_job_comment(comment: dict) -> Optional[dict]:
     role = header[1] if len(header) > 1 else ""
     location = header[2] if len(header) > 2 else ""
 
+    # P2 — identity integrity: a long prose sentence is a mis-split
+    # description (e.g. an em-dash inside a paragraph), not a header.
+    # Drop it so a description never surfaces as company/role.
+    if not company or not role or is_implausible_header(company, role):
+        return None
+
     # URL is usually inline in header[3] or in the body.
     url = None
     for part in header[3:]:
@@ -322,9 +330,6 @@ def parse_hn_job_comment(comment: dict) -> Optional[dict]:
         url = _find_url_in_text("\n".join(lines[body_start:]))
 
     body = "\n".join(lines[body_start:]).strip()
-
-    if not company or not role:
-        return None
 
     return {
         "company": company,
@@ -350,7 +355,7 @@ SEEKING_THREAD_TITLE_RE = re.compile(
 
 def find_latest_seeking_thread_id(**kwargs) -> Optional[int]:
     """Companion to find_latest_hiring_thread_id — the monthly "Who wants
-    to be hired?" thread where candidates post their own résumés."""
+    to be hired?" thread where people post their own résumés."""
     params = {
         "query": "Who wants to be hired",
         "tags": "story",

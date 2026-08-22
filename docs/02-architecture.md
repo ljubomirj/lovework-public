@@ -46,13 +46,13 @@
 3. **JobRegistry** upserts every job into SQLite/CSV with lifecycle tracking:
    `new → still_open → long_lasting → disappeared`. At the end of each run,
    jobs from the sources that *did* run get marked disappeared if absent.
-4. **JobMatcher** scores each surviving job against the candidate's profile
+4. **JobMatcher** scores each surviving job against the principal's profile
    (0–10, GO/MAYBE/FLAG/DROP), with prior-contact context from `applications/`
    and Gmail. Pre-LLM hard-kills (work-auth, reapply cooldowns) drop obvious
    non-fits cheaply. A branching-possibilities bonus adds +1 when a role aligns
    with an explicit future direction. See [chapter 05](05-matcher.md).
 5. **WikiStore** writes the findings: per-org history pages, a dated report per
-   run, an index, and the sources reference. The wiki *is* the candidate's
+   run, an index, and the sources reference. The wiki *is* the principal's
    memory; the report is the run's headline.
 
 The whole flow is one importable function: `pipeline.run_pipeline(profile, role,
@@ -107,8 +107,8 @@ LoveWork is driven three ways (all calling the same `pipeline.run_pipeline`):
 
 | Interface | How | Audience |
 |-----------|-----|----------|
-| **CLI** (`main.py`, `incremental_crawl.py`) | Shell, launchd/Hermes cron | The candidate (via scheduled runs) |
-| **Dashboard** (`GET /`) | Browser, refresh to update | The candidate watching a crawl |
+| **CLI** (`main.py`, `incremental_crawl.py`) | Shell, launchd/Hermes cron | The principal (via scheduled runs) |
+| **Dashboard** (`GET /`) | Browser, refresh to update | The principal watching a crawl |
 | **MCP** (`POST /mcp`) | JSON-RPC, 9 tools | Any MCP-speaking agent (Hermes, Claude Code, Codex, OpenCode) |
 
 See [chapter 06](06-dashboard-mcp.md) for the dashboard+MCP merge.

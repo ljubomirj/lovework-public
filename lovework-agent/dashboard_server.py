@@ -106,7 +106,7 @@ def _safe_org_name(name: str) -> str:
 def _resolve_lovework_root() -> Path:
     """Resolve the lovework repo root.
 
-    Honor an explicit LOVEWORK_ROOT env var first; otherwise probe candidate
+    Honor an explicit LOVEWORK_ROOT env var first; otherwise probe principal
     locations, preferring the location-agnostic ~/LJ-work-2026/ (works on all
     hosts), then the legacy ~/Documents/ (macbook2) and /opt/ljubomir/ (gigul2).
     """
@@ -129,12 +129,48 @@ LOVEWORK_DOCS_ROOT = LOVEWORK_ROOT  # docs/, profiles/, MANUAL.md etc.
 
 HERMES_HOME = resolve_hermes_home()
 
+STATE_DIR = LOVEWORK_ROOT / "state"
 WIKI = LOVEWORK_ROOT / "lovework-agent" / "wiki"
 REPORTS = WIKI / "reports"
 ORGS = WIKI / "orgs"
-LOGS = LOVEWORK_ROOT / "lovework-agent" / "logs"
+# Legacy dashboard helpers remain LJ-specific; all new and migrated logs live
+# under principal state.
+LOGS = STATE_DIR / "lj" / "logs"
 PROFILES = LOVEWORK_ROOT / "profiles"
 CACHE_DIR = LOVEWORK_ROOT / "lovework-agent" / "cache"
+
+# Browser publication is deliberately narrower than the principal state tree.
+# Caches, downloaded source pages, Gmail-derived data, profiles, and datasets
+# remain local-only.  The three subtrees below are operator-facing artefacts:
+# generated findings, wrapper logs, and compact run/incident records.
+PUBLISHED_PRINCIPAL_AREAS = {
+    "wiki": "wiki",
+    "logs": "logs",
+    "runs": "cache/runs",
+    "incidents": "cache/incidents",
+    "cache": "cache",
+}
+
+
+def principal_names() -> list[str]:
+    """Return only simple, existing principal state directories."""
+    if not STATE_DIR.is_dir():
+        return []
+    return sorted(
+        entry.name
+        for entry in STATE_DIR.iterdir()
+        if entry.is_dir() and re.fullmatch(r"[a-z][a-z0-9_-]*", entry.name)
+    )
+
+
+def principal_area_root(principal: str, area: str) -> Path | None:
+    """Map a public principal URL component to its intentionally public root."""
+    if principal not in principal_names():
+        return None
+    relative = PUBLISHED_PRINCIPAL_AREAS.get(area)
+    if relative is None:
+        return None
+    return STATE_DIR / principal / relative
 
 
 def _find_jobs_db() -> Path:
@@ -254,31 +290,34 @@ def _enrich_jobs(jobs: list[dict], text: str) -> list[dict]:
 
 
 def fetch_runs() -> list[dict]:
-    """List recent run log files with metadata + last activity."""
-    if not LOGS.exists():
-        return []
+    """List recent principal-owned crawl logs with metadata + last activity."""
     runs = []
-    for p in sorted(LOGS.glob("*.log"), key=lambda x: x.stat().st_mtime, reverse=True)[:20]:
-        st = p.stat()
-        last_lines = []
-        try:
-            with open(p, encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-                last_lines = [ln.rstrip() for ln in lines[-3:] if ln.strip()]
-        except Exception:
-            pass
-        kind = "incremental" if "incremental" in p.name else ("full" if "full" in p.name else "other")
-        runs.append({
-            "name": p.name,
-            "path": str(p),
-            "rel_path": f"lovework-agent/logs/{p.name}",
-            "size_kb": round(st.st_size / 1024, 1),
-            "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
-            "kind": kind,
-            "last_lines": last_lines,
-            "line_count": sum(1 for _ in open(p, errors="ignore")) if p.exists() else 0,
-        })
-    return runs
+    for principal in principal_names():
+        log_dir = principal_area_root(principal, "logs")
+        if log_dir is None or not log_dir.is_dir():
+            continue
+        for p in log_dir.glob("*.log"):
+            st = p.stat()
+            last_lines = []
+            try:
+                with open(p, encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                    last_lines = [ln.rstrip() for ln in lines[-3:] if ln.strip()]
+            except OSError:
+                pass
+            kind = "incremental" if "incremental" in p.name else ("full" if "full" in p.name else "other")
+            runs.append({
+                "principal": principal,
+                "name": p.name,
+                "path": str(p),
+                "rel_path": f"principals/{principal}/logs/{p.name}",
+                "size_kb": round(st.st_size / 1024, 1),
+                "mtime": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
+                "kind": kind,
+                "last_lines": last_lines,
+                "line_count": sum(1 for _ in open(p, errors="ignore")) if p.exists() else 0,
+            })
+    return sorted(runs, key=lambda run: run["mtime"], reverse=True)[:20]
 
 
 def fetch_live_run_progress() -> dict:
@@ -424,25 +463,53 @@ def fetch_sources() -> dict:
 
 def fetch_reports() -> list[dict]:
     """List past reports with size and a snippet of the headline (top 5 lines)."""
-    if not REPORTS.exists():
-        return []
     out = []
-    for p in sorted(REPORTS.glob("*.md"), key=lambda x: x.stat().st_mtime, reverse=True):
-        text = p.read_text(encoding="utf-8", errors="ignore")
-        first_line = text.split("\n", 1)[0] if text else ""
-        # Pull decision counts line if present
-        decisions = re.search(r"GO: \d+ \u00b7 MAYBE: \d+ \u00b7 FLAG: \d+ \u00b7 DROP: \d+", text)
-        summary = re.search(r"Total entries\*: (\d+)", text)
-        # Path relative to LOVEWORK_ROOT (doc server root)
-        rel = p.relative_to(LOVEWORK_ROOT).as_posix()
-        out.append({
-            "name": p.name, "path": str(p), "rel_path": rel,
-            "mtime": datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds"),
-            "title": first_line,
-            "decisions": decisions.group(0) if decisions else None,
-            "summary_count": summary.group(1) if summary else None,
+    for principal in principal_names():
+        reports_dir = principal_area_root(principal, "wiki")
+        reports_dir = reports_dir / "reports" if reports_dir is not None else None
+        if reports_dir is None or not reports_dir.is_dir():
+            continue
+        for p in reports_dir.glob("*.md"):
+            text = p.read_text(encoding="utf-8", errors="ignore")
+            first_line = text.split("\n", 1)[0] if text else ""
+            # Pull decision counts line if present
+            decisions = re.search(r"GO: \d+ \u00b7 MAYBE: \d+ \u00b7 FLAG: \d+ \u00b7 DROP: \d+", text)
+            summary = re.search(r"Total entries\*: (\d+)", text)
+            out.append({
+                "principal": principal,
+                "name": p.name,
+                "path": str(p),
+                "rel_path": f"principals/{principal}/wiki/reports/{p.name}",
+                "mtime": datetime.fromtimestamp(p.stat().st_mtime).isoformat(timespec="seconds"),
+                "title": first_line,
+                "decisions": decisions.group(0) if decisions else None,
+                "summary_count": summary.group(1) if summary else None,
+            })
+    return sorted(out, key=lambda report: report["mtime"], reverse=True)
+
+
+def fetch_principal_workspaces() -> list[dict]:
+    """Links to the narrowly published state for each principal."""
+    workspaces = []
+    for principal in principal_names():
+        wiki = principal_area_root(principal, "wiki")
+        logs = principal_area_root(principal, "logs")
+        reports_dir = wiki / "reports" if wiki is not None else None
+        latest = None
+        if reports_dir is not None and reports_dir.is_dir():
+            reports = sorted(reports_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if reports:
+                latest = reports[0]
+        workspaces.append({
+            "principal": principal,
+            "wiki_url": f"/principals/{principal}/wiki/",
+            "reports_url": f"/principals/{principal}/wiki/reports/",
+            "logs_url": f"/principals/{principal}/logs/",
+            "latest_report_name": latest.name if latest else None,
+            "latest_report_url": f"/principals/{principal}/wiki/reports/{latest.name}" if latest else None,
+            "has_logs": bool(logs and logs.is_dir()),
         })
-    return out
+    return workspaces
 
 
 def fetch_cron_jobs() -> list[dict]:
@@ -558,6 +625,7 @@ def render_html() -> str:
     apps = fetch_applications()
     sources = fetch_sources()
     reports = fetch_reports()
+    workspaces = fetch_principal_workspaces()
     cron = fetch_cron_jobs()
     cfg = fetch_config_summary()
     sysinfo = fetch_system()
@@ -584,7 +652,7 @@ def _fmt_section_profiles(profiles: dict) -> str:
     for name, p in profiles.items():
         soul = "✓" if p["soul_exists"] else "—"
         roles = ", ".join(p["roles"]) if p["roles"] else "(none)"
-        rows.append(f"<tr><td><b><a href='/profiles/{name}/'>{name}</a></b></td><td>{soul}</td><td>{p['soul_lines']}</td><td>{roles}</td></tr>")
+        rows.append(f"<tr><td><b>{name}</b></td><td>{soul}</td><td>{p['soul_lines']}</td><td>{roles}</td></tr>")
     return "\n".join(rows) or "<tr><td colspan=4>No profiles</td></tr>"
 
 
@@ -682,9 +750,35 @@ def _fmt_section_reports(reports: list[dict]) -> str:
     for r in reports:
         decision = r.get("decisions") or "—"
         count = r.get("summary_count") or "—"
-        rows.append(f"<tr><td><a href='/{r['rel_path']}'>{r['name']}</a></td>"
+        rows.append(f"<tr><td>{r['principal'].upper()}</td><td><a href='/{r['rel_path']}'>{r['name']}</a></td>"
                     f"<td>{r['mtime']}</td><td>{decision}</td><td>{count}</td></tr>")
-    return f"<table><thead><tr><th>Report</th><th>Modified</th><th>Decisions</th><th>Total</th></tr></thead><tbody>{chr(10).join(rows)}</tbody></table>"
+    return f"<table><thead><tr><th>Principal</th><th>Report</th><th>Modified</th><th>Decisions</th><th>Total</th></tr></thead><tbody>{chr(10).join(rows)}</tbody></table>"
+
+
+def _fmt_section_principal_workspaces(workspaces: list[dict]) -> str:
+    if not workspaces:
+        return "<p>No principal state has been created yet.</p>"
+    rows = []
+    for workspace in workspaces:
+        principal = workspace["principal"].upper()
+        latest = workspace.get("latest_report_name")
+        latest_html = (
+            f"<a href='{workspace['latest_report_url']}'>{latest}</a>"
+            if latest else "—"
+        )
+        rows.append(
+            f"<tr><td><b>{principal}</b></td>"
+            f"<td><a href='{workspace['wiki_url']}'>wiki</a> · "
+            f"<a href='{workspace['reports_url']}'>reports</a> · "
+            f"<a href='{workspace['logs_url']}'>logs</a></td>"
+            f"<td>{latest_html}</td></tr>"
+        )
+    return (
+        "<p>Published principal artefacts only: generated wiki/results, crawl logs, "
+        "and run records. Source caches, profiles, Gmail data, and datasets stay local.</p>"
+        "<table><thead><tr><th>Principal</th><th>Browse</th><th>Latest report</th></tr></thead>"
+        f"<tbody>{chr(10).join(rows)}</tbody></table>"
+    )
 
 
 def _fmt_section_cron(cron: list[dict]) -> str:
@@ -733,9 +827,9 @@ def _fmt_section_applications(apps: dict) -> str:
     lines = [f"<p><b>{apps['count']}</b> applications on file at <code>{apps['path']}</code></p>",
              "<table><thead><tr><th>Most recent</th></tr></thead><tbody>"]
     for name in apps.get("recent", []):
-        lines.append(f'<tr><td><a href="/applications/{name}">{name}</a></td></tr>')
+        lines.append(f"<tr><td>{name}</td></tr>")
     lines.append("</tbody></table>")
-    lines.append("<p><a href='/applications/'>📂 Browse all applications →</a></p>")
+    lines.append("<p>Application files are intentionally not published on the LAN dashboard.</p>")
     return "\n".join(lines)
 
 
@@ -747,10 +841,37 @@ def _fmt_section_system(s: dict) -> str:
     return f"""<p><b>LoveWork root:</b> <code><a href='/README.md'>{s.get('lovework_root')}</a></code></p>
 <p><b>Hermes home:</b> <code><a href='/{s.get('hermes_rel','')}'>{s.get('hermes_home')}</a></code></p>
 <p><b>Wiki:</b> <code><a href='/{s.get('wiki_rel','')}'>{s.get('wiki_path')}</a></code></p>
-<p><b>Jobs CSV:</b> <code><a href='/{s.get('jobs_csv_rel','')}'>{s.get('jobs_csv')}</a></code></p>
+<p><b>Jobs CSV:</b> <code>{s.get('jobs_csv')}</code> (not LAN-published)</p>
 <p><b>Config:</b> <code>{s.get('config_path')}</code></p>
 <p><b>Gateway state:</b> {gw_state} (running={gw_running})</p>
 <p><b>Platforms:</b> {plat_str}</p>"""
+
+
+def _serve_principal_public_path(path: str, query: str) -> dict | None:
+    """Serve only an allowlisted principal-result subtree.
+
+    Public URLs deliberately do not mirror ``state/``: it also holds private
+    profile-derived caches and downloaded source material.
+    """
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) < 3 or parts[0] != "principals":
+        return None
+    principal, area = parts[1], parts[2]
+    root = principal_area_root(principal, area)
+    if root is None:
+        return None
+    relative = "/".join(parts[3:]) or "/"
+    return doc_serve.try_serve_path(relative, query, root, request_path=path)
+
+
+def _serve_general_public_path(path: str, query: str) -> dict | None:
+    """Serve the small, intentionally public documentation surface."""
+    rel = path.strip("/")
+    allowed_top_level = {"README.md", "MANUAL.md", "LICENSE"}
+    allowed_prefixes = ("docs", "lovework-agent/wiki")
+    if rel in allowed_top_level or any(rel == prefix or rel.startswith(prefix + "/") for prefix in allowed_prefixes):
+        return doc_serve.try_serve_path(path, query, LOVEWORK_DOCS_ROOT)
+    return None
 
 
 def _fmt_section_registry(reg: dict) -> str:
@@ -864,6 +985,7 @@ def render_html() -> str:
     apps = fetch_applications()
     sources = fetch_sources()
     reports = fetch_reports()
+    workspaces = fetch_principal_workspaces()
     cron = fetch_cron_jobs()
     cfg = fetch_config_summary()
     sysinfo = fetch_system()
@@ -904,11 +1026,11 @@ def render_html() -> str:
     for r in runs:
         last = " | ".join(r.get("last_lines", []))[:120]
         runs_rows.append(
-            f"<tr><td><code><a href='/{r['rel_path']}'>{r['name']}</a></code></td><td>{r['kind']}</td>"
+            f"<tr><td>{r.get('principal', '').upper()}</td><td><code><a href='/{r['rel_path']}'>{r['name']}</a></code></td><td>{r['kind']}</td>"
             f"<td>{r['size_kb']}KB</td><td>{r['line_count']}</td><td>{r['mtime']}</td>"
             f"<td class='lastline'>{last}</td></tr>"
         )
-    runs_table_html = f"<table><thead><tr><th>Log file</th><th>Kind</th><th>Size</th><th>Lines</th><th>Modified</th><th>Last lines</th></tr></thead><tbody>{chr(10).join(runs_rows)}</tbody></table>" if runs_rows else "<p>No log files.</p>"
+    runs_table_html = f"<table><thead><tr><th>Principal</th><th>Log file</th><th>Kind</th><th>Size</th><th>Lines</th><th>Modified</th><th>Last lines</th></tr></thead><tbody>{chr(10).join(runs_rows)}</tbody></table>" if runs_rows else "<p>No log files.</p>"
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -921,10 +1043,11 @@ def render_html() -> str:
 <body>
 <div class="navbar">
   <span class="brand">LoveWork</span>
-  <a href="/">Dashboard</a>
+  <a href="/">Home</a>
+  <a href="/dashboard/">Dashboard</a>
+  <a href="/principals/lj/wiki/reports/">LJ results</a>
+  <a href="/principals/vj/wiki/reports/">VJ results</a>
   <a href="/docs/00-index.md">📖 Docs</a>
-  <a href="/profiles/">👤 Profiles</a>
-  <a href="/applications/">📋 Applications</a>
   <a href="/MANUAL.md">📋 Manual</a>
   <a href="/README.md">ℹ️ About</a>
   <a href="/docs/10-ecosystem-survey.md">🔍 Survey</a>
@@ -941,6 +1064,9 @@ def render_html() -> str:
 <h2>◎ Registry (live jobs.csv)</h2>
 {_fmt_section_registry(reg)}
 
+<h2>◫ Principal Results</h2>
+{_fmt_section_principal_workspaces(workspaces)}
+
 <h2>● Live Run Progress</h2>
 {progress_html}
 
@@ -953,12 +1079,11 @@ def render_html() -> str:
 <h2>⚙ Config (active profile)</h2>
 {_fmt_section_config(cfg)}
 
-<h2><a href="/profiles/" style="color: inherit; text-decoration: none;">◉ Profiles</a></h2>
+<h2>◉ Profiles</h2>
 <table><thead><tr><th>Profile</th><th>soul.md</th><th>Lines</th><th>Roles</th></tr></thead>
 <tbody>{_fmt_section_profiles(profiles)}</tbody></table>
-<p><a href="/profiles/">📂 Browse all profiles →</a></p>
 
-<h2><a href="/applications/" style="color: inherit; text-decoration: none;">◆ Applications (LJ submissions)</a></h2>
+<h2>◆ Applications (LJ submissions)</h2>
 {_fmt_section_applications(apps)}
 
 <h2><a href="/lovework-agent/wiki/orgs/" style="color: inherit; text-decoration: none;">◉ Entities (orgs originating jobs)</a></h2>
@@ -970,7 +1095,7 @@ def render_html() -> str:
 {_fmt_section_sources(sources)}
 </details>
 
-<h2><a href="/lovework-agent/wiki/reports/" style="color: inherit; text-decoration: none;">◆ Reports (past runs)</a></h2>
+<h2>◆ Reports (past runs)</h2>
 {_fmt_section_reports(reports)}
 
 <h2>★ Top Jobs (latest report)</h2>
@@ -986,6 +1111,79 @@ def render_html() -> str:
 """
 
 
+def render_lan_index() -> str:
+    """Render the stable, human-facing front door for LoveWork on the LAN."""
+    cards = []
+    for workspace in fetch_principal_workspaces():
+        principal = workspace["principal"].upper()
+        latest = workspace.get("latest_report_name")
+        latest_link = (
+            f"<p>Latest: <a href='{workspace['latest_report_url']}'>{latest}</a></p>"
+            if latest else "<p>No report yet.</p>"
+        )
+        cards.append(
+            f"<section class='principal-card'><h3>{principal}</h3>"
+            f"<p><a href='{workspace['wiki_url']}'>Wiki</a> · "
+            f"<a href='{workspace['reports_url']}'>Reports</a> · "
+            f"<a href='{workspace['logs_url']}'>Logs</a> · "
+            f"<a href='/principals/{workspace['principal']}/runs/'>Run records</a> · "
+            f"<a href='/principals/{workspace['principal']}/incidents/'>Incidents</a></p>"
+            f"{latest_link}</section>"
+        )
+    principal_html = "\n".join(cards) or "<p>No principal state has been created yet.</p>"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoveWork — Local LAN</title>
+{_DASHBOARD_CSS}
+<style>
+  .index {{ max-width: 960px; margin: 0 auto; }}
+  .intro {{ color: var(--dim); max-width: 760px; }}
+  .principal-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }}
+  .principal-card {{ background: var(--live-bg); border: 1px solid var(--line); border-radius: 7px; padding: 14px; }}
+  .principal-card h3 {{ margin-top: 0; }}
+  .links {{ display: flex; flex-wrap: wrap; gap: 8px 18px; }}
+</style>
+</head>
+<body>
+<main class="page index">
+  <div class="header">
+    <h1>◆ LoveWork</h1>
+    <div class="timestamp">Local LAN index · {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+  </div>
+  <p class="intro">One starting point for LoveWork’s published local results, operations, and documentation.</p>
+
+  <h2>Principal results</h2>
+  <div class="principal-grid">
+    {principal_html}
+  </div>
+
+  <h2>Operations</h2>
+  <p class="links">
+    <a href="/dashboard/">Live dashboard</a>
+    <a href="/health">Health</a>
+    <a href="/api/registry">Registry API</a>
+    <a href="/api/progress">Live-progress API</a>
+  </p>
+
+  <h2>Project information</h2>
+  <p class="links">
+    <a href="/README.md">About LoveWork</a>
+    <a href="/MANUAL.md">LJ operator manual</a>
+    <a href="/docs/00-index.md">Documentation index</a>
+    <a href="/docs/02-architecture.md">Architecture</a>
+    <a href="/docs/09-intelligence-layer.md">Intelligence layer</a>
+  </p>
+
+  <h2>Publication boundary</h2>
+  <p class="intro">Only generated principal wiki/results, logs, run records, and incident records are published here. Profiles, applications, source caches, Gmail-derived data, and datasets remain local-only.</p>
+</main>
+</body>
+</html>"""
+
+
 # ── HTTP handler ──────────────────────────────────────────────────────────
 class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -993,6 +1191,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = parsed.path
         query = parsed.query
         if path == "/" or path == "/index.html":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                html = render_lan_index()
+                self.wfile.write(html.encode("utf-8"))
+            except Exception as e:
+                self.wfile.write(f"<h1>Error rendering LoveWork index</h1><pre>{e}</pre>".encode("utf-8"))
+        elif path == "/dashboard" or path == "/dashboard/":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
@@ -1018,8 +1226,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps(fetch_live_run_progress(), default=str).encode())
         else:
-            # Fallback: serve documentation files (docs/, profiles/, *.md)
-            result = doc_serve.try_serve_path(path, query, LOVEWORK_DOCS_ROOT)
+            # /principals/ is canonical. Keep old local bookmarks alive while
+            # making the principal→agent vocabulary visible in every new URL.
+            if path.startswith("/candidates/"):
+                canonical = "/principals/" + path.removeprefix("/candidates/")
+                if query:
+                    canonical = f"{canonical}?{query}"
+                self.send_response(302)
+                self.send_header("Location", canonical)
+                self.end_headers()
+                return
+            # Publish only documentation plus the narrow principal-result
+            # surfaces. Never expose the state tree as a filesystem mirror.
+            result = _serve_principal_public_path(path, query)
+            if result is None:
+                result = _serve_general_public_path(path, query)
             if result:
                 self.send_response(200)
                 self.send_header("Content-Type", result["mime"])
@@ -1031,7 +1252,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
-                self.wfile.write(f"404 — Not found: {path}\n\nTry /docs/00-index.md for the documentation index.".encode())
+                self.wfile.write(
+                    f"404 — Not found: {path}\n\n"
+                    "Try /principals/vj/wiki/reports/ for VJ results or /docs/00-index.md for documentation.\n"
+                    .encode()
+                )
 
     def do_POST(self):
         """MCP endpoint: POST /mcp with a JSON-RPC 2.0 body.

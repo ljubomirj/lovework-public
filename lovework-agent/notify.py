@@ -46,6 +46,79 @@ def _gapi_env() -> dict[str, str]:
     return env
 
 
+# --- Gmail OAuth token pre-flight check -------------------------------------
+# A revoked token cannot send the completion email, but the failure only
+# surfaces after a multi-hour crawl.  This read-only check attempts a token
+# refresh without writing anything back, so the wrapper can detect a dead
+# credential before the crawl starts (LEARNINGS 2026-07-25 prevention).
+
+def _load_credentials(token_path: Path):
+    """Load an authorized-user credential from the Hermes profile token file."""
+    from google.oauth2.credentials import Credentials
+    return Credentials.from_authorized_user_file(str(token_path))
+
+
+def _refresh_credentials(creds) -> None:
+    """Attempt a read-only token refresh; never persists the refreshed token."""
+    from google.auth.transport.requests import Request
+    creds.refresh(Request())
+
+
+def check_token(hermes_home: Path = _HERMES_HOME) -> dict[str, str | bool]:
+    """Classify Gmail OAuth token health without mutating the token file.
+
+    Returns ``ok`` plus a ``status`` and human-readable ``detail``.  Used as
+    a pre-flight check in the crawl wrapper so a revoked token is detected
+    at crawl start instead of as a post-crawl notification failure.
+    """
+    token_path = hermes_home / "google_token.json"
+    if not token_path.exists():
+        return {
+            "ok": False,
+            "status": "missing",
+            "detail": f"no Gmail token file at {token_path}",
+        }
+    try:
+        creds = _load_credentials(token_path)
+        if not creds.refresh_token:
+            return {
+                "ok": False,
+                "status": "missing_refresh_token",
+                "detail": "Gmail token file has no refresh_token",
+            }
+        _refresh_credentials(creds)
+    except Exception as exc:
+        message = str(exc)
+        if "invalid_grant" in message:
+            return {
+                "ok": False,
+                "status": "revoked",
+                "detail": "Gmail OAuth token expired or revoked (invalid_grant); "
+                          "re-run the Google OAuth setup flow for the HermeL profile",
+            }
+        return {"ok": False, "status": "error", "detail": message[:300]}
+    return {
+        "ok": True,
+        "status": "authenticated",
+        "detail": "Gmail OAuth token can refresh",
+    }
+
+
+def classify_notification_error(stderr: str) -> str:
+    """Prefix a notification failure with its actionable cause when known.
+
+    Keeps the full traceback for evidence while making the root cause the
+    first thing a watchdog, incident, or operator reads.
+    """
+    if "invalid_grant" in stderr:
+        return (
+            "GMAIL_OAUTH_TOKEN_REVOKED: Gmail OAuth token expired or revoked — "
+            "re-run the Google OAuth setup flow (google-oauth-renewal skill).\n"
+            + stderr.strip()[:2500]
+        )
+    return stderr.strip()[:2500]
+
+
 def parse_report(report_path: Path) -> dict:
     """Extract summary info from a LoveWork report file."""
     text = report_path.read_text(encoding="utf-8", errors="ignore")
@@ -236,7 +309,7 @@ def send_email_result(subject: str, body: str) -> dict[str, str | bool]:
     except Exception as exc:
         return {"ok": False, "error": f"Gmail API error: {exc}"}
     if result.returncode != 0:
-        return {"ok": False, "error": result.stderr.strip()[:500] or "Gmail API failed"}
+        return {"ok": False, "error": classify_notification_error(result.stderr or "")}
     try:
         response = json.loads(result.stdout)
     except json.JSONDecodeError:
@@ -255,10 +328,28 @@ def send_email(subject: str, body: str) -> bool:
 
 def main():
     ap = argparse.ArgumentParser(description="Send LoveWork success notification email")
-    ap.add_argument("--report", "-r", required=True, help="Path to the report file")
+    ap.add_argument("--report", "-r", help="Path to the report file")
     ap.add_argument("--log", type=Path, help="Crawl log containing the final results summary")
     ap.add_argument("--run-id", help="Run ledger record to update with Gmail delivery evidence")
+    ap.add_argument("--runs-dir", type=Path, help="Principal-owned run-ledger directory")
+    ap.add_argument(
+        "--check-token",
+        action="store_true",
+        help="Read-only Gmail OAuth token pre-flight check; exits 0 when sendable",
+    )
     args = ap.parse_args()
+
+    if args.check_token:
+        result = check_token()
+        if result["ok"]:
+            print(f"TOKEN_OK: {result['detail']}")
+            return
+        status = str(result["status"]).upper()
+        print(f"TOKEN_{status}: {result['detail']}", file=sys.stderr)
+        sys.exit(2)
+
+    if not args.report:
+        ap.error("--report is required unless --check-token is used")
 
     report_path = Path(args.report)
     if not report_path.exists():
@@ -275,6 +366,7 @@ def main():
     logger.info(f"GOs: {info['decisions'].get('GO', 0)}, Top: {info['top_gos'][0][0] if info['top_gos'] else 'none'}")
 
     result = send_email_result(subject, body)
+    ledger_kwargs = {"runs_dir": args.runs_dir} if args.runs_dir is not None else {}
     if result.get("ok"):
         if args.run_id:
             record_notification(
@@ -282,6 +374,7 @@ def main():
                 status="sent",
                 provider=str(result["provider"]),
                 message_id=str(result["message_id"]),
+                **ledger_kwargs,
             )
         logger.info("Notification sent successfully: Gmail message %s", result["message_id"])
         return
@@ -293,6 +386,7 @@ def main():
             status="failed",
             provider="gmail_api",
             error=error,
+            **ledger_kwargs,
         )
     logger.error("Email notification failed: %s", error)
     sys.exit(1)

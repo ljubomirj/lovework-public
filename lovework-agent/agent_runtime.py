@@ -43,7 +43,7 @@ class LoveWorkAgentRuntime(Protocol):
     """Stable runtime interface for LoveWork agent tasks."""
 
     def run_task(self, task: str, *, profile_name: str, role: str) -> AgentRun:
-        """Run one bounded task for a candidate profile."""
+        """Run one bounded task for a principal profile."""
         ...
 
     def continue_task(self, run_id: str) -> AgentRun:

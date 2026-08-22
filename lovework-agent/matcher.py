@@ -1,5 +1,5 @@
 """
-Job matcher: score extracted jobs against a candidate profile using LLM.
+Job matcher: score extracted jobs against a principal profile using LLM.
 
 Two implementations:
 - JobMatcher (legacy): uses LLMClient.structured() with hand-written prompts
@@ -18,6 +18,7 @@ The matcher also considers:
 import logging
 import math
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -43,11 +44,11 @@ REAPPLY_ORG_COOLDOWN_MONTHS = int(
     os.getenv("LOVEWORK_REAPPLY_ORG_COOLDOWN_MONTHS", "18")
 )
 
-# Work-authorization hard-kill. A job requiring work rights the candidate does NOT have
+# Work-authorization hard-kill. A job requiring work rights the principal does NOT have
 # (e.g. "US citizen/person only", "must be authorized to work in the US", "no visa
 # sponsorship") is an instant DROP — no point paying for an LLM match. These negative
 # forms are matched against the job's location/visa text; a bare "visa sponsorship
-# available" is NOT a kill. See profiles/<name>/work_auth.md for the candidate's rights.
+# available" is NOT a kill. See profiles/<name>/work_auth.md for the principal's rights.
 WORK_AUTH_KILL_PATTERNS = [
     r"\bus\s+(citizen|person|national)s?\s+only\b",
     r"\bcitizens?hip\b.*\brequired\b",
@@ -58,6 +59,29 @@ WORK_AUTH_KILL_PATTERNS = [
     r"\bcannot\s+(sponsor|provide\s+sponsorship)\b",
     r"\bunfortunately[^\n]{0,40}no\s+sponsorship",
     r"\bw-?2\s+only\b",
+    # P3 — market-reach gates on landing pages: a site that serves only US
+    # visitors is a deterministic kill even when the listing text is vague.
+    r"\bthis\s+site\s+is\s+for\s+us\s+visitors\s+only\b",
+    r"\bus\s+visitors\s+only\b",
+    r"\bopen\s+to\s+us\s+(residents|candidates|applicants)\s+only\b",
+    r"\b(?:u\.?s\.?)\s*only\b",
+]
+
+# A profile can opt into a narrow, deterministic preference exclusion with a
+# marker in its soul.md. This is deliberately different from work
+# authorisation: the principal *could* do the work, but has explicitly said it
+# is the wrong profession. The narrow frontier-research condition prevents a
+# city name, prestigious employer, or adjacent coursework from overriding that
+# durable preference.
+AI_ML_NLP_RESEARCH_EXCLUSION_MARKER = "lovework:exclude-ai-ml-nlp-research"
+AI_ML_NLP_TITLE_PATTERNS = [
+    r"\b(machine learning|ml|artificial intelligence|ai|nlp|natural language|llm|large language)\b",
+]
+FRONTIER_AI_RESEARCH_PATTERNS = [
+    r"\b(superintelligence|superlearner|reinforcement learning|frontier ai|frontier model|foundation model|large language model|ai safety)\b",
+]
+FRONTIER_RESEARCH_TITLE_PATTERNS = [
+    r"\b(member of technical staff|research scientist|research engineer|applied scientist|researcher)\b",
 ]
 
 
@@ -96,7 +120,7 @@ class MatchResult(BaseModel):
     primary_fetch_method: str = Field(default="", description="Primary evidence fetch method")
     alignment_matrix: List[str] = Field(
         default_factory=list,
-        description="Evidence-grounded job requirement to candidate fact alignments",
+        description="Evidence-grounded job requirement to principal fact alignments",
     )
     gaps: List[str] = Field(default_factory=list, description="Material requirements lacking evidence")
     application_angle: str = Field(default="", description="Specific truthful application narrative")
@@ -189,7 +213,14 @@ def _decision_from_action(action: str) -> str:
     }.get(action, "FLAG")
 
 
-def _build_context(org_name: str, job_title: str, job_url: str, registry, use_history: bool) -> tuple[str, Optional[str]]:
+def _build_context(
+    org_name: str,
+    job_title: str,
+    job_url: str,
+    registry,
+    use_history: bool,
+    history_kwargs: Optional[dict] = None,
+) -> tuple[str, Optional[str]]:
     """Build the additional context for the LLM and check the re-apply rule.
 
     Returns (context_text, reapply_kill_reason).
@@ -211,29 +242,37 @@ def _build_context(org_name: str, job_title: str, job_url: str, registry, use_hi
     if use_history:
         try:
             from history import scan_history
-            prior = scan_history(org_name, use_gmail=True)
+            prior = scan_history(org_name, use_gmail=True, **(history_kwargs or {}))
             if prior.has_application or prior.gmail_events:
                 context_parts.append(f"**Prior contact**: {prior.summary()}")
         except Exception as e:
             logger.debug(f"History scan failed: {e}")
 
     context = "\n".join(context_parts) if context_parts else "No prior context."
-    reapply_kill = _check_reapply_kill(org_name, job_title)
+    # A cached historical replay intentionally sets use_history=False: it
+    # must not query Gmail while replaying an old registry snapshot.
+    reapply_kill = (
+        _check_reapply_kill(org_name, job_title, **(history_kwargs or {}))
+        if use_history
+        else None
+    )
     return context, reapply_kill
 
 
 def _check_reapply_kill(
     org_name: str, job_title: str, applications_dir: Optional[Path] = None,
+    gmail_label: Optional[str] = None,
+    gmail_credential_home: Optional[Path] = None,
 ) -> Optional[str]:
     """Return a reason string if we should auto-DROP this re-apply, else None.
 
     Two layers of protection:
       1. **Same-role cooldown** (REAPPLY_COOLDOWN_MONTHS, default 6): if
-         the candidate applied for a similar role (title jaccard >= 0.6)
+         the principal applied for a similar role (title jaccard >= 0.6)
          and was rejected, DROP. Catches "applied to ACME-AI-Scientist
          and got rejected — don't apply to ACME-AI-Scientist again".
       2. **Org-level cooldown** (REAPPLY_ORG_COOLDOWN_MONTHS, default 18):
-         if the candidate was rejected at the same org within the last N
+         if the principal was rejected at the same org within the last N
          months (any role), DROP. Catches "Poolside rejected Evaluations
          2 months ago — don't apply to Poolside Pre-training today,
          even though the role title is different".
@@ -251,15 +290,35 @@ def _check_reapply_kill(
         # file). Gmail is the canonical rejection signal — applications/
         # txt files are updated after the fact. The Gmail accessor
         # gracefully no-ops if google_api.py is not set up.
-        prior = scan_history(org_name, use_gmail=True, applications_dir=applications_dir)
+        history_kwargs = {"applications_dir": applications_dir}
+        if gmail_label is not None:
+            history_kwargs["gmail_label"] = gmail_label
+        if gmail_credential_home is not None:
+            history_kwargs["gmail_credential_home"] = gmail_credential_home
+        prior = scan_history(org_name, use_gmail=True, **history_kwargs)
     except Exception:
         return None
 
     if not prior.applications:
         return None
 
-    # Layer 1: same-role short cooldown.
+    # Layer 0 (P4): an active application — applied, no rejection yet — is
+    # principal intent evidence, not a fresh opportunity. Same-role within
+    # the short cooldown, any status: suppress so it is never re-surfaced
+    # as a GO while the principal is already pursuing it.
     role_cutoff = datetime.now() - timedelta(days=REAPPLY_COOLDOWN_MONTHS * 30)
+    for app in prior.applications:
+        try:
+            app_date = datetime.fromisoformat(app.date)
+        except (TypeError, ValueError):
+            continue
+        if app_date >= role_cutoff and _titles_similar(app.role, job_title):
+            return (
+                f"Active application on {app.date} for similar role '{app.role}' "
+                f"(no rejection recorded — in progress). Not a fresh opportunity."
+            )
+
+    # Layer 1: same-role short cooldown.
     for app in prior.applications:
         try:
             app_date = datetime.fromisoformat(app.date)
@@ -334,6 +393,53 @@ def _apply_work_auth_kill(result: MatchResult, work_auth_kill: Optional[str]) ->
     return result
 
 
+def _check_profile_preference_exclusion(
+    profile: str,
+    job_title: str,
+    job_description: str = "",
+) -> Optional[str]:
+    """Return a reason when a profile explicitly excludes this profession.
+
+    This deliberately handles only the narrowly marked AI/ML/NLP-research
+    exclusion. Ordinary adjacent roles remain LLM-scored; a principal can still
+    seek a classical-statistics Data Scientist job that happens to mention AI.
+    """
+    profile_lower = (profile or "").lower()
+    if AI_ML_NLP_RESEARCH_EXCLUSION_MARKER not in profile_lower:
+        return None
+
+    title = (job_title or "").lower()
+    description = (job_description or "").lower()
+    if any(re.search(pattern, title) for pattern in AI_ML_NLP_TITLE_PATTERNS):
+        return "explicit principal preference: AI/ML/NLP work is not the desired profession"
+
+    is_frontier_research = (
+        any(re.search(pattern, title) for pattern in FRONTIER_RESEARCH_TITLE_PATTERNS)
+        and any(re.search(pattern, description) for pattern in FRONTIER_AI_RESEARCH_PATTERNS)
+    )
+    if is_frontier_research:
+        return (
+            "explicit principal preference: frontier AI research is not the desired profession"
+        )
+    return None
+
+
+def _apply_profile_preference_exclusion(
+    result: MatchResult,
+    preference_exclusion: Optional[str],
+) -> MatchResult:
+    """Make a durable profession exclusion an explainable low-score DROP."""
+    if preference_exclusion:
+        for field in ("fit_score", "reach_score", "flourish_score"):
+            setattr(result, field, 1.0)
+        result.combined_score = 1.0
+        result.recommended_action = "DROP"
+        result.score = 1.0
+        result.decision = "DROP"
+        result.reasoning = f"AUTO-DROP: {preference_exclusion}. " + result.reasoning
+    return result
+
+
 def _titles_similar(a: str, b: str) -> bool:
     """Loose title matching for re-apply detection."""
     a_lower = a.lower().strip()
@@ -368,11 +474,13 @@ class JobMatcher:
         profile: str,
         registry: Optional["JobRegistry"] = None,
         use_history: bool = True,
+        history_kwargs: Optional[dict] = None,
     ):
         self.llm = llm
         self.profile = profile
         self.registry = registry
         self.use_history = use_history
+        self.history_kwargs = history_kwargs or {}
 
     def match(
         self,
@@ -383,14 +491,25 @@ class JobMatcher:
         location: str = "",
     ) -> MatchResult:
         # Work-auth hard-kill fires BEFORE the LLM call (no point paying to match a role
-        # the candidate isn't eligible to take, e.g. "US citizen only").
+        # the principal isn't eligible to take, e.g. "US citizen only").
         work_auth_kill = _check_work_auth_kill(location, job_description)
         if work_auth_kill:
             return _apply_work_auth_kill(
                 MatchResult(score=0.0, decision="DROP", reasoning=""), work_auth_kill
             )
 
-        context, reapply_kill = _build_context(org_name, job_title, job_url, self.registry, self.use_history)
+        preference_exclusion = _check_profile_preference_exclusion(
+            self.profile, job_title, job_description
+        )
+        if preference_exclusion:
+            return _apply_profile_preference_exclusion(
+                MatchResult(score=1.0, decision="DROP", reasoning=""),
+                preference_exclusion,
+            )
+
+        context, reapply_kill = _build_context(
+            org_name, job_title, job_url, self.registry, self.use_history, self.history_kwargs
+        )
 
         prompt = f"""You are a personal talent agent. Your client has this profile:
 
@@ -415,7 +534,7 @@ Score this role on three independent axes (each 0-10):
    A top-lab Research Scientist role with PhD/publication requirements → reach 1-3.
    An applied ML engineering role where production experience matters → reach 6-9.
    A small/early startup should NOT inherit the low reach of a star-researcher
-   lab. If the candidate has rare direct domain experience plus evidence of
+   lab. If the principal has rare direct domain experience plus evidence of
    shipped products or production systems, use reach 7-9 even if that domain
    is not their most recent job.
 
@@ -432,7 +551,7 @@ Also provide:
 - likely_day_to_day: what the actual work looks like beyond the JD
   (one sentence)
 - reasoning: brief explanation tying the three axes together
-- alignment_matrix: 3-6 concise strings in the form "job need -> candidate evidence"
+- alignment_matrix: 3-6 concise strings in the form "job need -> principal evidence"
 - gaps: material job requirements for which the supplied profile/retrieved evidence
   contains no proof; do not invent experience
 - application_angle: a concrete, truthful 1-2 sentence application angle using
@@ -442,7 +561,7 @@ Special signals:
 - If the job has been open >30 days (long_lasting), reduce flourish_score
   by 1-2 — the org may be slow or disorganised.
 - If the role aligns with an explicit branching possibility
-  (see CANDIDATE POSSIBILITIES), add +1 to fit_score and name the branch.
+  (see PRINCIPAL POSSIBILITIES), add +1 to fit_score and name the branch.
 - Rare direct-domain matches deserve decisive calibration. Roughly 8+ years in
   the advertised domain plus a concrete shipped/demoed artifact and a reachable
   startup role normally implies fit 9-10, reach 7-9, flourish 8-10. Do not
@@ -499,10 +618,12 @@ class JobMatcherDSPyAdapter:
         profile: str,
         registry: Optional["JobRegistry"] = None,
         use_history: bool = True,
+        history_kwargs: Optional[dict] = None,
     ):
         self.profile = profile
         self.registry = registry
         self.use_history = use_history
+        self.history_kwargs = history_kwargs or {}
 
         # Lazy import + configure
         try:
@@ -532,7 +653,20 @@ class JobMatcherDSPyAdapter:
                 work_auth_kill,
             )
 
-        context, reapply_kill = _build_context(org_name, job_title, job_url, self.registry, self.use_history)
+        preference_exclusion = _check_profile_preference_exclusion(
+            self.profile, job_title, job_description
+        )
+        if preference_exclusion:
+            return _apply_profile_preference_exclusion(
+                MatchResult(fit_score=1.0, reach_score=1.0, flourish_score=1.0,
+                            combined_score=1.0, recommended_action="DROP",
+                            score=1.0, decision="DROP", reasoning=""),
+                preference_exclusion,
+            )
+
+        context, reapply_kill = _build_context(
+            org_name, job_title, job_url, self.registry, self.use_history, self.history_kwargs
+        )
 
         if not self._dspy_available:
             return MatchResult(

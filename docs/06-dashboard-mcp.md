@@ -1,7 +1,7 @@
 # Chapter 06 — Dashboard + MCP Server
 
 > **Audience:** agents (the MCP half) and operators (the dashboard half).
-> **See also:** [`../DECISIONS.md`](../DECISIONS.md) D18; [`../agent/skills/lovework/SKILL.md`](../agent/skills/lovework/SKILL.md) "Dashboard + MCP server" section.
+> **See also:** [`../DECISIONS.md`](../DECISIONS.md) D18; [`../agents/skills/lovework/SKILL.md`](../agents/skills/lovework/SKILL.md) "Dashboard + MCP server" section.
 
 ## One process, two faces
 
@@ -10,7 +10,8 @@
 
 | Face | Route | Consumer |
 |------|-------|----------|
-| **Dashboard HTML** | `GET /` | The candidate's browser — watch a crawl, browse reports |
+| **LAN master index** | `GET /` | Browser front door — links every published LoveWork surface |
+| **Detailed dashboard HTML** | `GET /dashboard/` | Operator — watch a crawl, inspect live state |
 | **MCP JSON-RPC** | `POST /mcp` | Any MCP-speaking agent — drives LoveWork in-process |
 
 One process, one port, one source of truth. Read-only tools (`registry_stats`,
@@ -25,7 +26,7 @@ cd ~/LJ-work-2026/lovework/lovework-agent
 ../venv/bin/python3 dashboard_server.py [--port 8765]
 ```
 
-The `LOVEWORK_ROOT` path is resolved by probing candidates, preferring the
+The `LOVEWORK_ROOT` path is resolved by probing principals, preferring the
 location-agnostic `~/LJ-work-2026/lovework` (works on all machines), then the
 legacy `~/Documents/LJ-work-2026/lovework` (macbook2) and
 `/opt/ljubomir/LJ-work-2026/lovework` (gigul2), honoring an env var first. No
@@ -33,7 +34,11 @@ manual setup needed on any of LJ's machines.
 
 ## The dashboard (human face)
 
-Open `http://localhost:8765`. Auto-refreshes every 30s. Sections:
+Open `http://localhost:8765`. The root is a stable LAN master index: it links
+every principal's published wiki, reports, logs, run records, incidents,
+project documentation, APIs, and the detailed dashboard. Browse the detailed
+auto-refreshing operational dashboard at `http://localhost:8765/dashboard/`.
+Its sections are:
 
 - **System** — paths, gateway state.
 - **Registry** — live job counts by lifecycle (`new`/`still_open`/`long_lasting`/`disappeared`).
@@ -82,7 +87,7 @@ params, `-32603` internal).
 | # | Tool | What it does |
 |---|------|--------------|
 | 1 | `crawl_org` | Crawl one org's site for job listings |
-| 2 | `match_profile` | Score a job against a profile (per-candidate `profile_name`+`role`) |
+| 2 | `match_profile` | Score a job against a profile (per-principal `profile_name`+`role`) |
 | 3 | `search_jobs` | Query the registry by status/org |
 | 4 | `check_history` | Prior contact with an org (`applications/` + Gmail) |
 | 5 | `fetch_url` | Fetch a URL as markdown (Firecrawl + cache) |
@@ -92,7 +97,7 @@ params, `-32603` internal).
 | 9 | `run_pipeline` | **Trigger a full pipeline run** — long-running, blocks until done |
 
 `match_profile` and `run_pipeline` take `profile_name` + `role` so one server
-serves all four candidates. `run_pipeline` is the "go find me jobs" button as
+serves all four principals. `run_pipeline` is the "go find me jobs" button as
 a tool: it crawls, scores, updates registry+wiki, writes a dated report, and
 returns `{entries, disappeared, report_path, gos, maybes}`. **Long-running** —
 incremental crawl 3–15 min, full run 20–30 min. The MCP call blocks; the

@@ -13,6 +13,30 @@ from matcher import MatchResult
 
 logger = logging.getLogger(__name__)
 
+# Changing a principal profile changes the meaning of every assessment.  Keep
+# that profile revision in the cache namespace so a revised preference does not
+# accidentally reuse an old result merely because the role filename stayed the
+# same.
+ASSESSMENT_CACHE_VERSION = "matcher-v6"
+
+
+def profile_fingerprint(profile_text: str) -> str:
+    """Return a short stable fingerprint for the effective matcher profile."""
+    return hashlib.sha256((profile_text or "").encode("utf-8")).hexdigest()[:16]
+
+
+def assessment_cache_namespace(
+    profile_name: str,
+    role: str | None,
+    model: str,
+    profile_text: str,
+) -> str:
+    """Build a cache namespace bound to principal, role, model and profile text."""
+    return (
+        f"{ASSESSMENT_CACHE_VERSION}:{profile_name.lower()}:{role or 'default'}:"
+        f"{profile_fingerprint(profile_text)}:{model}"
+    )
+
 
 class AssessmentCachingMatcher:
     """Cache successful MatchResult objects; never cache UNSCORED failures."""

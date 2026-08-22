@@ -71,6 +71,36 @@ def test_match_result_rejects_out_of_range():
         MatchResult(score=11.0, decision="GO", reasoning="")
 
 
+def test_explicit_ai_research_preference_exclusion_drops_david_silver_shape():
+    """VJ's MSc must not turn a frontier-AI lab role into a recommendation."""
+    profile = "Vedar profile\n<!-- lovework:exclude-ai-ml-nlp-research -->"
+    matcher = JobMatcher(llm=None, profile=profile, use_history=False)
+
+    result = matcher.match(
+        "Member of Technical Staff",
+        "We are building a superlearner for superintelligence using powerful "
+        "reinforcement learning algorithms.",
+        "Ineffable Intelligence (David Silver)",
+        location="London",
+    )
+
+    assert result.decision == "DROP"
+    assert result.recommended_action == "DROP"
+    assert result.score <= 1.0
+    assert "explicit principal preference" in result.reasoning
+
+
+def test_explicit_ai_research_preference_does_not_exclude_pricing_analyst():
+    from matcher import _check_profile_preference_exclusion
+
+    profile = "Vedar profile\n<!-- lovework:exclude-ai-ml-nlp-research -->"
+    assert _check_profile_preference_exclusion(
+        profile,
+        "Pricing Analyst",
+        "Use statistics and forecasting to improve insurance pricing.",
+    ) is None
+
+
 # ── Re-apply kill ────────────────────────────────────────────────────────
 
 def test_reapply_kill_triggers_on_same_role_with_rejection(isolated_config):
@@ -90,8 +120,9 @@ def test_reapply_kill_triggers_on_same_role_with_rejection(isolated_config):
     assert "rejection" in result.lower()
 
 
-def test_reapply_kill_no_trigger_if_no_rejection(isolated_config):
-    """No rejection marker in the .txt file means no kill."""
+def test_reapply_kill_suppresses_active_application(isolated_config):
+    """P4 — an in-progress application (no rejection) is intent evidence,
+    not a fresh opportunity: same-role within the cooldown is suppressed."""
     from matcher import _check_reapply_kill
 
     apps = isolated_config["applications"]
@@ -100,7 +131,9 @@ def test_reapply_kill_no_trigger_if_no_rejection(isolated_config):
     d.mkdir()
     (d / f"{recent.replace('-', '')}-Acme-AI_Scientist.txt").write_text("Applied. No response yet.")
 
-    assert _check_reapply_kill("Acme", "AI Scientist", applications_dir=apps) is None
+    result = _check_reapply_kill("Acme", "AI Scientist", applications_dir=apps)
+    assert result is not None
+    assert "in progress" in result.lower()
 
 
 def test_reapply_kill_no_trigger_if_old_enough(isolated_config):

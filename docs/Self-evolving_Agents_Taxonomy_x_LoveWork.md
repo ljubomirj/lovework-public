@@ -96,7 +96,7 @@ LoveWork already runs 4 profiles (LJ, KJ, VJ, PK) — each with different career
 | VJ | (Mystery profile) | — |
 | PK | (Mystery profile) | — |
 
-The routing problem Shilong flags ("how to find the suitable agent") maps onto your profile-selection mechanism (`--profile lj/vj/kj/pk`). As you scale to Phase 3 (multi-candidate service), routing becomes a first-class problem: which profile does this opportunity suit best? What if it suits two?
+The routing problem Shilong flags ("how to find the suitable agent") maps onto your profile-selection mechanism (`--profile lj/vj/kj/pk`). As you scale to Phase 3 (multi-principal service), routing becomes a first-class problem: which profile does this opportunity suit best? What if it suits two?
 
 **A human is a router.** LoveWork's router is currently LJ picking `--profile`. The next step is automated routing — and the taxonomy says this requires strong base models.
 
@@ -157,7 +157,7 @@ The taxonomy closes with three diagnostic questions. Here are LoveWork's answers
 | **2** | Build a **harness self-improvement pass**: after N recommendations, have LoveWork propose changes to its own scoring prompts, profile criteria, or source priorities based on observed patterns | This is the self-improvement loop that makes harness-level adaptation real |
 | **3** | Create a **regression suite of historical decisions** — lock in known good scoring behaviour so harness changes don't regress quality | Shilong's implicit point about evaluation: if you can't measure whether the system got better, you can't claim it evolved |
 | **4** | Prototype a **weak-signal feedback model**: persistent non-engagement with a role category → automated down-weight of that category | Turns silence into signal (Level 3 technique applied to Level 2 harness) |
-| **5** | Explore **multi-expert routing across profiles**: as new profiles come online, route opportunities to the right persona automatically | Prepares for Phase 3 (multi-candidate), solves the routing bottleneck Shilong identifies |
+| **5** | Explore **multi-expert routing across profiles**: as new profiles come online, route opportunities to the right persona automatically | Prepares for Phase 3 (multi-principal), solves the routing bottleneck Shilong identifies |
 
 ---
 

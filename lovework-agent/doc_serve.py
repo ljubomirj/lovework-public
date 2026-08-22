@@ -128,7 +128,7 @@ PAGE_HTML = """\
 </head>
 <body>
 <div class="nav">
-  <a href="/">🏠 Dashboard</a>
+  <a href="/">🏠 LoveWork</a>
   <a href="/docs/00-index.md">📖 Docs</a>
   <a href="/MANUAL.md">📋 Manual</a>
   <a href="/README.md">ℹ️ About</a>
@@ -137,7 +137,7 @@ PAGE_HTML = """\
 <div class="container">
 {content}
 <div class="footer">
-  Generated {date} · <a href="{raw_url}">View raw</a> · <a href="/">Back to dashboard</a>
+  Generated {date} · <a href="{raw_url}">View raw</a> · <a href="/">Back to LoveWork</a>
 </div>
 </div>
 </body>
@@ -168,7 +168,7 @@ DIR_HTML = """\
 </head>
 <body>
 <div class="nav">
-  <a href="/">🏠 Dashboard</a>
+  <a href="/">🏠 LoveWork</a>
   <a href="/docs/00-index.md">📖 Docs</a>
   <a href="/MANUAL.md">📋 Manual</a>
   <span style="color:#666">{rel_path}</span>
@@ -214,14 +214,13 @@ def make_breadcrumb(request_path: str) -> str:
 
 
 def _render_markdown_page(fs_path: Path, request_path: str, lovework_root: Path) -> Optional[str]:
-    rel = fs_path.relative_to(lovework_root).as_posix()
     try:
         raw = fs_path.read_text(encoding="utf-8")
     except Exception:
         return None
 
     body = render_markdown(raw)
-    body = rewrite_md_links(body, f"/{rel}")
+    body = rewrite_md_links(body, request_path)
     body = auto_link_urls(body)
 
     title_m = re.search(r"<h1>(.*?)</h1>", body)
@@ -230,9 +229,9 @@ def _render_markdown_page(fs_path: Path, request_path: str, lovework_root: Path)
     return PAGE_HTML.format(
         title=html_mod.escape(title),
         content=body,
-        breadcrumb=make_breadcrumb(f"/{rel}"),
+        breadcrumb=make_breadcrumb(request_path),
         date=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        raw_url=f"/{rel}?raw",
+        raw_url=f"{request_path}?raw",
     )
 
 
@@ -253,17 +252,28 @@ def _render_directory_page(fs_path: Path, request_path: str, lovework_root: Path
 
     items = []
     try:
-        entries = sorted(
-            (e for e in fs_path.iterdir() if not is_hidden(e)),
-            key=lambda e: (not e.is_dir(), e.name.lower()),
-        )
+        # Reports directories: sort by mtime descending (newest first).
+        # All other directories: sort alphabetically, directories first.
+        is_reports_dir = fs_path.name == "reports"
+        if is_reports_dir:
+            entries = sorted(
+                (e for e in fs_path.iterdir() if not is_hidden(e)),
+                key=lambda e: (e.stat().st_mtime, e.name.lower()),
+                reverse=True,
+            )
+        else:
+            entries = sorted(
+                (e for e in fs_path.iterdir() if not is_hidden(e)),
+                key=lambda e: (not e.is_dir(), e.name.lower()),
+            )
     except PermissionError:
         entries = []
 
     rel_path = request_path or "/"
     if rel_path != "/":
         parent = rel_path.rsplit("/", 1)[0] if "/" in rel_path else ""
-        items.append(f'<li><a href="/{parent}">📁 ..</a> <span>(parent)</span></li>')
+        parent_href = parent or "/"
+        items.append(f'<li><a href="{parent_href}">📁 ..</a> <span>(parent)</span></li>')
 
     for e in entries:
         name = e.name
@@ -286,19 +296,41 @@ def _render_directory_page(fs_path: Path, request_path: str, lovework_root: Path
 
 # ── Public entry point ────────────────────────────────────────────────────
 
-def try_serve_path(path: str, query: str, lovework_root: Path) -> Optional[dict]:
+def _resolve_scoped_path(root: Path, relative_path: str) -> Optional[Path]:
+    """Resolve a request-relative path without allowing an escape from root."""
+    try:
+        root = root.resolve()
+        principal = (root / relative_path).resolve()
+        principal.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    return principal
+
+
+def try_serve_path(
+    path: str,
+    query: str,
+    lovework_root: Path,
+    *,
+    request_path: Optional[str] = None,
+) -> Optional[dict]:
     """Try to serve a path as a doc or directory listing.
 
     Returns a dict with "data" (bytes), "mime" (str), or None if the
     path is outside the doc-serving scope.
     """
-    # Normalise: strip trailing slash to avoid double-slash in hrefs
+    # ``path`` is filesystem-relative to lovework_root. ``request_path`` is
+    # the public URL used in generated links, which may intentionally differ
+    # for a narrowly published subtree such as /principals/vj/wiki/.
     path = path.rstrip("/") or "/"
     rel = path.lstrip("/")
-    fs_path = lovework_root / rel if rel else lovework_root
+    fs_path = _resolve_scoped_path(lovework_root, rel)
+    if fs_path is None:
+        return None
+    request_path = (request_path or path).rstrip("/") or "/"
 
     if fs_path.is_dir():
-        html = _render_directory_page(fs_path, path, lovework_root)
+        html = _render_directory_page(fs_path, request_path, lovework_root)
         if html:
             return {"data": html.encode("utf-8"), "mime": "text/html; charset=utf-8"}
         return None
@@ -310,7 +342,7 @@ def try_serve_path(path: str, query: str, lovework_root: Path) -> Optional[dict]
                 return {"data": data, "mime": "text/plain; charset=utf-8"}
             except Exception:
                 return None
-        html = _render_markdown_page(fs_path, path, lovework_root)
+        html = _render_markdown_page(fs_path, request_path, lovework_root)
         if html:
             return {"data": html.encode("utf-8"), "mime": "text/html; charset=utf-8"}
         return None

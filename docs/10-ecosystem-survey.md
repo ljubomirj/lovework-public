@@ -43,7 +43,7 @@ tailored CVs, and land a Head of Applied AI role.
 | **Phase** | Post-discovery (you already picked the role) | Pre-discovery (finds roles you didn't know about) |
 | **Crawl** | Manual URL paste or portal scan | LLM-guided crawler across 9 sources |
 | **Registry** | Flat tracker (`applications.md`) | Lifecycle: new → still_open → long_lasting → disappeared |
-| **Profiles** | Single-user, CV + profile.yml | Multi-candidate (lj/kj/vj/pk), 3-layer model + work_auth + possibilities |
+| **Profiles** | Single-user, CV + profile.yml | Multi-principal (lj/kj/vj/pk), 3-layer model + work_auth + possibilities |
 | **Emergent profession** | Not supported | Native for vj/pk |
 | **PDF generation** | First-class (HTML → Puppeteer → PDF) | None (`cases.py` creates only a README) |
 | **Scoring** | 6-block structured eval | Flat 0–10 score + reasoning + GO/MAYBE/FLAG/DROP |
@@ -105,7 +105,7 @@ single pass often leaves in.
 | **Registry** | Simple CSV tracker | Full lifecycle in SQLite/CSV |
 | **PDF** | First-class (LaTeX, compile+inspect loop) | None |
 | **Review** | Two-agent drafter-reviewer | Single-agent scoring |
-| **Profiles** | Single-user, CLAUDE.md + skill files | Multi-candidate, 3-layer (bio-long/cv-short/possibilities) |
+| **Profiles** | Single-user, CLAUDE.md + skill files | Multi-principal, 3-layer (bio-long/cv-short/possibilities) |
 | **/setup** | Structured onboarding with 3 paths | Manual file creation |
 | **/expand** | Competency discovery from online sources | Not supported |
 | **/upskill** | Gap analysis + learning plan | Not supported |
@@ -116,9 +116,9 @@ single pass often leaves in.
 |------|-------|--------|
 | **Drafter-reviewer workflow** — when a GO is found, spawn a second agent to research the org and critique the match reasoning before presenting it | Medium | Low (pi already has subagents) |
 | **Relevance-weighted CV cutting** — when a CV overflows, score each line by (a) relevance to JD, (b) uniqueness, (c) cover-letter dependency; cut lowest first | Medium | Low |
-| **Skill gap analysis** (`/upskill`) — compare candidate profile against top GOs and produce a bridge plan | High | Medium |
+| **Skill gap analysis** (`/upskill`) — compare principal profile against top GOs and produce a bridge plan | High | Medium |
 | **Competency expansion** (`/expand`) — scan GitHub, LinkedIn, publications, course syllabi for skills not in the profile; inject into `possibilities.md` | Medium | Medium |
-| **Structured onboarding** — a guided `/setup` flow for new candidates instead of manual file creation | Medium | Medium |
+| **Structured onboarding** — a guided `/setup` flow for new principals instead of manual file creation | Medium | Medium |
 
 ---
 
@@ -147,12 +147,12 @@ fully local with Ollama or with any LLM API.
 | axis | Resume-Matcher | LoveWork |
 |------|---------------|----------|
 | **Phase** | Resume optimisation (post-match) | Discovery + tracking (pre-application) |
-| **Scoring** | Resume-vs-JD keyword match | Candidate-profile-vs-job LLM score |
+| **Scoring** | Resume-vs-JD keyword match | Principal-profile-vs-job LLM score |
 | **Crawl** | None (manual JD paste) | LLM-guided crawler across 9 sources |
 | **Registry** | None | Full lifecycle + wiki |
 | **PDF** | 4 templates, multi-language | None |
 | **Local-first** | First-class (Ollama) | API-only (DeepSeek) |
-| **Multi-candidate** | Single-user | 4 candidates |
+| **Multi-principal** | Single-user | 4 principals |
 
 ### Ideas for LoveWork
 
@@ -168,7 +168,7 @@ fully local with Ollama or with any LLM API.
 
 **Origin:** [interviewstreet/hiring-agent](https://github.com/interviewstreet/hiring-agent)
 by HackerRank. A resume-to-score pipeline designed for **recruiters evaluating
-candidates**, not for candidates finding work.
+principals**, not for principals finding work.
 
 **Runtime:** Python (PyMuPDF + Jinja + LLM providers).
 
@@ -195,13 +195,13 @@ candidates**, not for candidates finding work.
 
 | axis | hiring-agent | LoveWork |
 |------|-------------|----------|
-| **Perspective** | Employer scoring a candidate | Candidate scoring a role |
+| **Perspective** | Employer scoring a principal | Principal scoring a role |
 | **Input** | Resume PDF → structured JSON | Profile files (soul, cv, possibilities) |
 | **Output** | 0–100 score with 4 category breakdown + evidence | 0–10 score + GO/MAYBE/FLAG/DROP + reasoning |
 | **Enrichment** | GitHub profile + repos, classified | None |
 | **Fairness** | Explicit forbidden-signal categories | Implicit (no guardrails) |
 | **Crawl** | None | Full LLM-guided crawler |
-| **Multi-candidate** | Single-resume | 4 profiles |
+| **Multi-principal** | Single-resume | 4 profiles |
 
 ### Ideas for LoveWork
 
@@ -209,7 +209,7 @@ candidates**, not for candidates finding work.
 |------|-------|--------|
 | **Structured multi-axis scoring** — replace lovework's flat 0–10 with a breakdown (e.g. role fit, culture fit, growth potential, risk, comp alignment) | High | Medium |
 | **Fairness guardrails** — add explicit forbidden signals to the matcher prompt so a role at a prestigious lab doesn't get an automatic score bump unless the profile values it | Low | Low |
-| **GitHub enrichment of case dirs** — when a GO is pursued, fetch the candidate's GitHub projects relevant to the role and add them to the case dir | Low | Low |
+| **GitHub enrichment of case dirs** — when a GO is pursued, fetch the principal's GitHub projects relevant to the role and add them to the case dir | Low | Low |
 
 ---
 
@@ -242,7 +242,7 @@ Ordered by estimated value-to-effort ratio for the current Phase 2.
 
 | Idea | From | What it replaces / adds |
 |------|------|------------------------|
-| **Structured onboarding /setup** | ai-job-search | Guided setup for new candidates |
+| **Structured onboarding /setup** | ai-job-search | Guided setup for new principals |
 | **Playwright portal scanner** | career-ops | Fallback for JS-heavy career portals |
 | **Local-LLM fallback (Ollama)** | Resume-Matcher | Offline/dev mode for the matcher |
 

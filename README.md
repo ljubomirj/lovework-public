@@ -47,7 +47,7 @@ decisions and outcomes -> learning loop -> reports and suggestions
 ```
 
 The working prototype already crawls public career and opportunity sources,
-tracks their lifecycle, scores them against layered candidate profiles, checks
+tracks their lifecycle, scores them against layered principal profiles, checks
 prior contact, and writes a browsable local wiki. The public release will grow
 from this documentation-first foundation toward a reusable engine.
 

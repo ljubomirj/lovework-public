@@ -50,7 +50,7 @@ This implies a stricter decision object than a score:
 ```text
 observations and provenance
 -> explicit assumptions and competing hypotheses
--> simulated candidate/company/process outcomes
+-> simulated principal/company/process outcomes
 -> recommended experiment or action
 -> observed result
 -> model and policy update, if justified
@@ -73,7 +73,7 @@ after feedback.
 Every decision or regression case should therefore record:
 
 - provenance for each decisive claim;
-- whether a fact/rule was supplied by the candidate, obtained from a primary
+- whether a fact/rule was supplied by the principal, obtained from a primary
   source, inferred by the model, or added by a human reviewer;
 - the model and policy used for the first assessment;
 - any rerun, intervention, or fallback, and why it happened; and
@@ -81,7 +81,7 @@ Every decision or regression case should therefore record:
 
 This is not bureaucracy. Without it, a harness can look self-improving while
 quietly accumulating human insight, post-hoc heuristics, or evaluation leakage.
-The correct standard is not “no human knowledge”—the candidate is necessarily
+The correct standard is not “no human knowledge”—the principal is necessarily
 an expert source about their own life—but **labelled, auditable human knowledge
 and a fair account of what the harness itself contributed**.
 
@@ -91,7 +91,7 @@ LoveWork should own these components directly:
 
 | Component | Purpose | Why it is strategic |
 |---|---|---|
-| **Person model** | Living model of candidate taste, capability, constraints, trajectory, and energy. | This is the persona simulator; it should become more faithful over time. |
+| **Person model** | Living model of principal taste, capability, constraints, trajectory, and energy. | This is the persona simulator; it should become more faithful over time. |
 | **Decision policy** | Current rules for fit/reach/flourish/action, thresholds, caps, and exceptions. | This is the judgment surface users experience. |
 | **Decision ledger** | Append-only record of every recommendation, user response, action, and outcome. | This is the training data for future judgment. |
 | **Reflection loop** | Periodic review of decisions and outcomes, producing profile/policy/test updates. | This is how the system learns with the client. |
@@ -225,7 +225,7 @@ Runs carry the temporal context:
   "git_commit": "...",
   "profile_hash": "sha256...",
   "policy_version": "matcher-multiaxis-v1",
-  "model": "deepseek-v4-flash"
+  "model": "mimo-v2.5"
 }
 ```
 

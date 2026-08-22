@@ -23,5 +23,5 @@ dependencies = [
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
 
 [tool.setuptools]
-py-modules = ["config", "llm_client", "llm_runtime", "tools", "crawler", "matcher", "wiki_store", "history", "job_registry", "agent", "agent_runtime", "main"]
-packages = ["sources"]
+py-modules = ["config", "llm_client", "llm_runtime", "tools", "crawler", "matcher", "wiki_store", "history", "job_registry", "agent", "agent_runtime", "agent_interviews", "main"]
+packages = ["sources", "interview_providers"]

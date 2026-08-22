@@ -2,7 +2,7 @@
 # sync_skills.sh — distribute the canonical lovework skill to all agent paths.
 #
 # The canonical home is:
-#   ~/LJ-work-2026/lovework/agent/skills/lovework/SKILL.md
+#   ~/LJ-work-2026/lovework/agents/skills/lovework/SKILL.md
 #
 # All agent-specific paths (in-repo and per-host) are symlinks pointing
 # at the canonical file. This script is idempotent: it (re)creates the
@@ -16,15 +16,15 @@
 
 set -euo pipefail
 
-# Resolve the repo root. Try explicit env var first, then probe candidate
+# Resolve the repo root. Try explicit env var first, then probe principal
 # locations, preferring the location-agnostic ~/LJ-work-2026/ (all hosts),
 # then the legacy ~/Documents/ (macbook2).
 if [[ -n "${LOVEWORK_REPO_ROOT:-}" ]]; then
   REPO_ROOT="$LOVEWORK_REPO_ROOT"
 else
-  for candidate in "$HOME/LJ-work-2026/lovework" "$HOME/Documents/LJ-work-2026/lovework"; do
-    if [[ -f "$candidate/agent/skills/lovework/SKILL.md" ]]; then
-      REPO_ROOT="$candidate"
+  for principal in "$HOME/LJ-work-2026/lovework" "$HOME/Documents/LJ-work-2026/lovework"; do
+    if [[ -f "$principal/agents/skills/lovework/SKILL.md" ]]; then
+      REPO_ROOT="$principal"
       break
     fi
   done
@@ -34,7 +34,7 @@ else
   fi
 fi
 
-CANONICAL="$REPO_ROOT/agent/skills/lovework/SKILL.md"
+CANONICAL="$REPO_ROOT/agents/skills/lovework/SKILL.md"
 MODE="${1:-copy}"
 
 # Guard: the canonical must be a real file, not a symlink. A previous run with
@@ -50,8 +50,8 @@ echo "Canonical: $CANONICAL ($(wc -l < "$CANONICAL") lines)"
 
 # ── In-repo directory-level symlinks (verify only) ──────────────────────
 # Each agent's in-repo skills dir is a *directory-level* symlink:
-#   .claude/skills/lovework -> ../../agent/skills/lovework
-#   .codex/skills/lovework  -> ../../agent/skills/lovework
+#   .claude/skills/lovework -> ../../agents/skills/lovework
+#   .codex/skills/lovework  -> ../../agents/skills/lovework
 # So the SKILL.md inside each path resolves to the canonical automatically.
 # We only verify these directory symlinks exist — we do NOT touch SKILL.md
 # at this level. (A previous version of this script created file-level
@@ -64,7 +64,7 @@ REPO_DIR_LINKS=(
   "$REPO_ROOT/.claude/skills/lovework"
   "$REPO_ROOT/.codex/skills/lovework"
 )
-DIR_REL_TARGET="../../agent/skills/lovework"
+DIR_REL_TARGET="../../agents/skills/lovework"
 
 for dlink in "${REPO_DIR_LINKS[@]}"; do
   mkdir -p "$(dirname "$dlink")"
@@ -122,7 +122,7 @@ OPENCODE_PATHS=(
 )
 for of in "${OPENCODE_PATHS[@]}"; do
   if [[ -d "$(dirname "$of")" ]]; then
-    rel_target="../../../agent/skills/lovework/SKILL.md"
+    rel_target="../../../agents/skills/lovework/SKILL.md"
     if [[ ! -L "$of" ]] && [[ -e "$of" ]]; then
       backup="${of}.bak.$(date +%Y%m%d-%H%M%S)"
       mv "$of" "$backup"

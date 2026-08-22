@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 # ── Locations ────────────────────────────────────────────────────────────
 APPLICATIONS_DIR = config.APPLICATIONS_DIR
 GMAIL_LJ_JOBS_LABEL = os.getenv("LOVEWORK_GMAIL_LABEL", "LJ-jobs")
+PREPARATION_MARKERS = (
+    "LoveWork status: PREPARED — not submitted",
+    "LoveWork ATA status: PREPARED — interview not started",
+)
 
 
 @dataclass
@@ -165,11 +169,12 @@ def scan_applications(org: str, applications_dir: Optional[Path] = None) -> List
         if txt_path:
             try:
                 content = txt_path.read_text(encoding="utf-8", errors="ignore")
-                # A LoveWork PREPARED dossier is research for a possible
-                # application, not evidence that LJ applied.  It lives beside
-                # applications deliberately, so this explicit marker is the
-                # boundary that protects outcome/reapply logic.
-                if "LoveWork status: PREPARED — not submitted" in content:
+                # LoveWork preparation dossiers live beside real applications,
+                # but neither a GO review pack nor an unstarted agent-to-agent
+                # interview is evidence that the principal applied. Explicit
+                # markers protect outcome and reapply logic until submission
+                # or interview start is confirmed.
+                if any(marker in content for marker in PREPARATION_MARKERS):
                     continue
                 # Look for rejection markers
                 rej_match = re.search(
@@ -200,20 +205,26 @@ def scan_applications(org: str, applications_dir: Optional[Path] = None) -> List
 
 # ── Gmail scanner ───────────────────────────────────────────────────────
 
-def scan_gmail(org: str, max_results: int = 10) -> List[GmailEvent]:
-    """Scan Gmail LJ-Jobs label for emails related to this org.
+def scan_gmail(
+    org: str,
+    max_results: int = 10,
+    label: str = GMAIL_LJ_JOBS_LABEL,
+    credential_home: Optional[Path] = None,
+) -> List[GmailEvent]:
+    """Scan one approved Gmail label for emails related to this org.
 
     Uses the shared gmail_accessor (google_api.py via the correct Python interpreter).
     Returns empty list if Gmail is not available or the query fails.
     """
     from gmail_accessor import run_gapi
 
-    # Build a Gmail search query: from:*org* OR subject:*org* within LJ-Jobs label.
+    # Build a Gmail search query: from:*org* OR subject:*org* within the approved label.
     aliases = _org_aliases(org)
     org_query = " OR ".join(f'"{a}"' for a in aliases[:3])  # Limit to 3 aliases
-    query = f'label:{GMAIL_LJ_JOBS_LABEL} ({org_query})'
+    query = f'label:{label} ({org_query})'
 
-    messages = run_gapi("gmail", "search", query, "--max", str(max_results))
+    gapi_kwargs = {"credential_home": credential_home} if credential_home is not None else {}
+    messages = run_gapi("gmail", "search", query, "--max", str(max_results), **gapi_kwargs)
     if not messages:
         return []
 
@@ -269,14 +280,26 @@ def _classify_email(subject: str, from_: str) -> str:
 
 # ── Combined scanner ────────────────────────────────────────────────────
 
-def scan_history(org: str, use_gmail: bool = True, applications_dir: Optional[Path] = None) -> PriorContact:
+def scan_history(
+    org: str,
+    use_gmail: bool = True,
+    applications_dir: Optional[Path] = None,
+    gmail_label: str = GMAIL_LJ_JOBS_LABEL,
+    gmail_credential_home: Optional[Path] = None,
+) -> PriorContact:
     """Scan both applications/ and Gmail for prior contact with an org.
 
     Args:
         org: organization name to search for
         use_gmail: whether to also scan Gmail (requires google_api.py)
         applications_dir: override the configured APPLICATIONS_DIR (used in tests)
+        gmail_label: approved label to query; defaults to LJ's legacy source
+        gmail_credential_home: optional token home for a non-LJ mailbox source
     """
     apps = scan_applications(org, applications_dir=applications_dir)
-    gmail = scan_gmail(org) if use_gmail else []
+    gmail = (
+        scan_gmail(org, label=gmail_label, credential_home=gmail_credential_home)
+        if use_gmail
+        else []
+    )
     return PriorContact(org=org, applications=apps, gmail_events=gmail)

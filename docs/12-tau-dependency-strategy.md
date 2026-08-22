@@ -6,7 +6,7 @@
 
 ## Decision
 
-Tau is a pinned harness dependency candidate, not an owned product layer.
+Tau is a pinned harness dependency principal, not an owned product layer.
 
 LoveWork may use Tau for the generic agent runtime: loop, tools, transcript,
 events, cancellation, and session mechanics. LoveWork must not outsource its

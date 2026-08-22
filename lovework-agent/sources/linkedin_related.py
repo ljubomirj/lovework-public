@@ -4,7 +4,7 @@ Source: LinkedIn related-ads.
 A specialised source that complements `gmail_lj_jobs`. LJ's flow:
 
   1. Gmail LinkedIn alert arrives with N jobs.
-  2. The candidate opens the alert's "search" URL in LinkedIn.
+  2. The principal opens the alert's "search" URL in LinkedIn.
   3. LinkedIn shows the matched jobs PLUS related / similar jobs at the
      bottom or side (LinkedIn's recommendation engine).
   4. Those related jobs are *fresher* than the original email — they're
@@ -93,9 +93,9 @@ def _needs_auth_path() -> Path:
     return _profile_dir() / NEEDS_AUTH_FILENAME
 
 
-def _read_seeds() -> List[str]:
+def _read_seeds(seeds_path: Optional[Path] = None) -> List[str]:
     """Return the list of seed URLs to visit this run, oldest first."""
-    p = _seeds_path()
+    p = seeds_path or _seeds_path()
     if not p.exists():
         return []
     out: List[str] = []
@@ -107,8 +107,8 @@ def _read_seeds() -> List[str]:
     return out
 
 
-def _write_seeds(urls: List[str]) -> None:
-    p = _seeds_path()
+def _write_seeds(urls: List[str], seeds_path: Optional[Path] = None) -> None:
+    p = seeds_path or _seeds_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     body = (
         "# LinkedIn seeds for the related-ads source\n"
@@ -120,8 +120,8 @@ def _write_seeds(urls: List[str]) -> None:
     p.write_text(body, encoding="utf-8")
 
 
-def _append_needs_auth(url: str, reason: str) -> None:
-    p = _needs_auth_path()
+def _append_needs_auth(url: str, reason: str, needs_auth_path: Optional[Path] = None) -> None:
+    p = needs_auth_path or _needs_auth_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     line = f"- {datetime.now().strftime('%Y-%m-%d')} {url}  # {reason}\n"
     if not p.exists():
@@ -136,15 +136,15 @@ def _append_needs_auth(url: str, reason: str) -> None:
             f.write(line)
 
 
-def append_seed(url: str) -> None:
+def append_seed(url: str, seeds_path: Optional[Path] = None) -> None:
     """Public helper: append a URL to the seeds file if not already present."""
     if not url or not url.startswith("http"):
         return
-    seeds = _read_seeds()
+    seeds = _read_seeds(seeds_path)
     if url in seeds:
         return
     seeds.append(url)
-    _write_seeds(seeds)
+    _write_seeds(seeds, seeds_path)
 
 
 # ── HTTP + parse ─────────────────────────────────────────────────────────
@@ -210,18 +210,18 @@ def _parse_jobposting(html: str, url: str) -> tuple[str, str]:
         except (json.JSONDecodeError, ValueError):
             continue
         # JSON-LD can be a list, a single object, or @graph-wrapped.
-        candidates = data if isinstance(data, list) else [data]
-        for cand in candidates:
-            if isinstance(cand, dict):
-                if "@graph" in cand and isinstance(cand["@graph"], list):
-                    candidates.extend(cand["@graph"])
-        for cand in candidates:
-            if not isinstance(cand, dict):
+        json_records = data if isinstance(data, list) else [data]
+        for json_record in json_records:
+            if isinstance(json_record, dict):
+                if "@graph" in json_record and isinstance(json_record["@graph"], list):
+                    json_records.extend(json_record["@graph"])
+        for json_record in json_records:
+            if not isinstance(json_record, dict):
                 continue
-            t = cand.get("@type", "")
+            t = json_record.get("@type", "")
             if t == "JobPosting" or (isinstance(t, list) and "JobPosting" in t):
-                title = (cand.get("title") or "").strip()
-                org = cand.get("hiringOrganization") or {}
+                title = (json_record.get("title") or "").strip()
+                org = json_record.get("hiringOrganization") or {}
                 if isinstance(org, dict):
                     company = (org.get("name") or "").strip()
                 else:
@@ -254,15 +254,30 @@ class LinkedInRelatedSource:
     name = "linkedin_related"
 
     def __init__(self, crawler=None, matcher: Optional[JobMatcher] = None,
-                 registry: Optional[JobRegistry] = None):
+                 registry: Optional[JobRegistry] = None,
+                 sources_dir: Optional[Path] = None):
         # `crawler` accepted for interface uniformity; we use direct HTTP.
         self.matcher = matcher
         self.registry = registry
+        self.sources_dir = sources_dir
+
+    @property
+    def seeds_path(self) -> Optional[Path]:
+        if self.sources_dir is None:
+            return None
+        return self.sources_dir / SEEDS_FILENAME
+
+    @property
+    def needs_auth_path(self) -> Optional[Path]:
+        if self.sources_dir is None:
+            return None
+        return self.sources_dir / NEEDS_AUTH_FILENAME
 
     def run(self) -> List[WikiEntry]:
-        seeds = _read_seeds()
+        seeds = _read_seeds(self.seeds_path)
         if not seeds:
-            logger.info(f"[{self.name}] No seeds in {_seeds_path()}; skipping.")
+            seed_path = self.seeds_path or _seeds_path()
+            logger.info(f"[{self.name}] No seeds in {seed_path}; skipping.")
             return []
 
         # Only process the oldest N seeds this run.
@@ -283,7 +298,7 @@ class LinkedInRelatedSource:
                 continue
             if _looks_like_auth_wall(html):
                 auth_walled.append(seed_url)
-                _append_needs_auth(seed_url, "auth wall detected")
+                _append_needs_auth(seed_url, "auth wall detected", self.needs_auth_path)
                 continue
 
             job_urls = _harvest_job_urls(html)[:MAX_RELATED_PER_SEED]
@@ -299,7 +314,7 @@ class LinkedInRelatedSource:
         # Auth-walled are appended at the end so they get retried later
         # (LJ may add a cookie or change approach).
         next_seeds = remaining + auth_walled
-        _write_seeds(next_seeds)
+        _write_seeds(next_seeds, self.seeds_path)
 
         logger.info(f"[{self.name}] {len(entries)} entries; {len(auth_walled)} auth-walled")
         return entries
@@ -323,16 +338,16 @@ class LinkedInRelatedSource:
                 data = json.loads(m.group("json"))
             except (json.JSONDecodeError, ValueError):
                 continue
-            candidates = data if isinstance(data, list) else [data]
-            for cand in candidates:
-                if isinstance(cand, dict) and "@graph" in cand:
-                    candidates.extend(cand["@graph"])
-            for cand in candidates:
-                if not isinstance(cand, dict):
+            json_records = data if isinstance(data, list) else [data]
+            for json_record in json_records:
+                if isinstance(json_record, dict) and "@graph" in json_record:
+                    json_records.extend(json_record["@graph"])
+            for json_record in json_records:
+                if not isinstance(json_record, dict):
                     continue
-                t = cand.get("@type", "")
+                t = json_record.get("@type", "")
                 if t == "JobPosting" or (isinstance(t, list) and "JobPosting" in t):
-                    description = (cand.get("description") or "").strip()
+                    description = (json_record.get("description") or "").strip()
                     break
             if description:
                 break

@@ -1,27 +1,39 @@
 #!/usr/bin/env bash
 # LoveWork crawl wrapper — locking + logging + notification
 #
-# Usage: lovework-crawl.sh <full|incremental>
+# Usage: lovework-crawl.sh <full|incremental> [principal] [role]
 #   full        — all sources, full report
 #   incremental — neolabs + gmail + HN hiring + HN jobs
 #
-# Lock file at cache/crawl.lock prevents concurrent runs.
-# Log file at logs/<type>-<timestamp>.log — dashboard picks it up live.
+# Each principal owns its lock, reports, run ledger, and crawl state.
+# Log file at state/<principal>/logs/<type>-<timestamp>.log — dashboard picks it up live.
 # On success: outputs summary, emails LJ
 # On failure: outputs error (Hermes cron delivers via Telegram)
 
 set -euo pipefail
 
-CRAWL_TYPE="${1:?Usage: lovework-crawl.sh <full|incremental>}"
+CRAWL_TYPE="${1:?Usage: lovework-crawl.sh <full|incremental> [principal] [role]}"
+PRINCIPAL="${2:-lj}"
+ROLE="${3:-}"
 LOVEWORK_ROOT="$HOME/LJ-work-2026/lovework"
 AGENT_DIR="$LOVEWORK_ROOT/lovework-agent"
 VENV_PYTHON="$LOVEWORK_ROOT/venv/bin/python3"
-LOCK_FILE="$AGENT_DIR/cache/crawl.lock"
-LOG_DIR="$AGENT_DIR/logs"
+case "$PRINCIPAL" in
+    lj) ROLE="${ROLE:-general}" ;;
+    vj) ROLE="${ROLE:-data-statistics-pricing}" ;;
+    *)
+        echo "Unsupported scheduled LoveWork principal: $PRINCIPAL" >&2
+        exit 64
+        ;;
+esac
+STATE_ROOT="$LOVEWORK_ROOT/state/$PRINCIPAL"
+LOCK_FILE="$STATE_ROOT/cache/crawl.lock"
+RUNS_DIR="$STATE_ROOT/cache/runs"
+LOG_DIR="$STATE_ROOT/logs"
 DATE_STR=$(date +"%Y-%m-%d %H:%M")
 TS=$(date +"%Y%m%d-%H%M%S")
-LOG_FILE="$LOG_DIR/$CRAWL_TYPE-$TS.log"
-RUN_ID="$CRAWL_TYPE-$TS-$$"
+LOG_FILE="$LOG_DIR/$CRAWL_TYPE-$PRINCIPAL-$TS.log"
+RUN_ID="$CRAWL_TYPE-$PRINCIPAL-$TS-$$"
 RUN_LEDGER="$AGENT_DIR/run_ledger.py"
 NOTIFIER="$AGENT_DIR/notify.py"
 
@@ -52,7 +64,7 @@ log() {
 }
 
 record_start() {
-    "$VENV_PYTHON" "$RUN_LEDGER" start \
+    "$VENV_PYTHON" "$RUN_LEDGER" --runs-dir "$RUNS_DIR" start \
         --run-id "$RUN_ID" --run-type "$CRAWL_TYPE" \
         --profile "$HERMES_PROFILE_NAME" --hermes-home "$HERMES_HOME" \
         --log-file "$LOG_FILE" --pid "$$" >> "$LOG_FILE" 2>&1
@@ -70,7 +82,7 @@ record_finish() {
     if [ -n "$ERROR_TEXT" ]; then
         ARGS+=(--error "$ERROR_TEXT")
     fi
-    "$VENV_PYTHON" "$RUN_LEDGER" "${ARGS[@]}" >> "$LOG_FILE" 2>&1 || true
+    "$VENV_PYTHON" "$RUN_LEDGER" --runs-dir "$RUNS_DIR" "${ARGS[@]}" >> "$LOG_FILE" 2>&1 || true
 }
 
 # --------------- Lock ---------------
@@ -117,23 +129,48 @@ finish_unexpectedly() {
 }
 trap finish_unexpectedly EXIT
 
-log "LoveWork $CRAWL_TYPE sweep — $DATE_STR"
+log "LoveWork $CRAWL_TYPE sweep — $PRINCIPAL / $ROLE — $DATE_STR"
 log "Run ID: $RUN_ID"
 log "Hermes profile: $HERMES_PROFILE_NAME ($HERMES_HOME)"
 log "Log: $LOG_FILE"
 log "Running..."
 
+# --------------- Pre-flight notification token check ---------------
+# A revoked Gmail OAuth token makes the completion email guaranteed to fail
+# after a multi-hour crawl.  Detect deterministic token death before crawling
+# and abort fast (Telegram-visible failure) instead of discovering it hours
+# later.  Transient refresh errors do NOT abort: the crawl data is the primary
+# value and a temporary network blip must not skip it.
+TOKEN_CHECK_EXIT=
+TOKEN_CHECK=$("$VENV_PYTHON" "$NOTIFIER" --check-token 2>&1) || TOKEN_CHECK_EXIT=$?
+if [ -z "$TOKEN_CHECK_EXIT" ]; then
+    log "[TOKEN] $TOKEN_CHECK"
+else
+    log "[TOKEN] $TOKEN_CHECK"
+    case "$TOKEN_CHECK" in
+        TOKEN_REVOKED:*|TOKEN_MISSING:*|TOKEN_MISSING_REFRESH_TOKEN:*)
+            log "[TOKEN] Notification channel deterministically dead — aborting before crawl."
+            record_finish "failed" 2 "" "pre-flight Gmail token check failed: $TOKEN_CHECK"
+            FINALIZED=1
+            exit 2
+            ;;
+        *)
+            log "[TOKEN] Token check failed but may be transient — continuing crawl."
+            ;;
+    esac
+fi
+
 cd "$AGENT_DIR"
 
 if [ "$CRAWL_TYPE" = "full" ]; then
     set +e
-    "$VENV_PYTHON" main.py --profile lj --role general --source all --report \
+    "$VENV_PYTHON" main.py --profile "$PRINCIPAL" --role "$ROLE" --source all --report \
         2>&1 | tee -a "$LOG_FILE"
     CRAWL_EXIT=${PIPESTATUS[0]}
     set -e
 elif [ "$CRAWL_TYPE" = "incremental" ]; then
     set +e
-    "$VENV_PYTHON" incremental_crawl.py \
+    "$VENV_PYTHON" incremental_crawl.py --profile "$PRINCIPAL" --role "$ROLE" \
         2>&1 | tee -a "$LOG_FILE"
     CRAWL_EXIT=${PIPESTATUS[0]}
     set -e
@@ -151,16 +188,19 @@ fi
 
 log "[CRAWL COMPLETE]"
 
-# Regenerate the manual so dashboard picks up latest stats
-if ! "$VENV_PYTHON" build_manual.py >> "$LOG_FILE" 2>&1; then
-    log "[MANUAL FAILED] build_manual.py"
-    record_finish "failed" 1 "" "build_manual.py failed after successful crawl"
-    FINALIZED=1
-    exit 1
+# MANUAL.md is the LJ dashboard's operator summary. Other principals keep
+# their own report/index under state/<principal>/ and never rewrite it.
+if [ "$PRINCIPAL" = "lj" ]; then
+    if ! "$VENV_PYTHON" build_manual.py >> "$LOG_FILE" 2>&1; then
+        log "[MANUAL FAILED] build_manual.py"
+        record_finish "failed" 1 "" "build_manual.py failed after successful crawl"
+        FINALIZED=1
+        exit 1
+    fi
 fi
 
 # A crawl is only a successful operational run when it yields its report.
-LATEST_REPORT=$(ls -t wiki/reports/*.md 2>/dev/null | head -1)
+LATEST_REPORT=$(ls -t "$STATE_ROOT"/wiki/reports/*.md 2>/dev/null | head -1)
 if [ -z "$LATEST_REPORT" ]; then
     log "[REPORT FAILED] No report file found after successful crawl"
     record_finish "failed" 1 "" "no report file found after successful crawl"
@@ -169,7 +209,7 @@ if [ -z "$LATEST_REPORT" ]; then
 fi
 
 record_finish "succeeded" 0 "$LATEST_REPORT"
-if "$VENV_PYTHON" "$NOTIFIER" --report "$LATEST_REPORT" --log "$LOG_FILE" --run-id "$RUN_ID" >> "$LOG_FILE" 2>&1; then
+if "$VENV_PYTHON" "$NOTIFIER" --report "$LATEST_REPORT" --log "$LOG_FILE" --run-id "$RUN_ID" --runs-dir "$RUNS_DIR" >> "$LOG_FILE" 2>&1; then
     log "[EMAIL] Gmail API delivery evidenced"
 else
     log "[EMAIL FAILED] Crawl succeeded; watchdog must reconcile notification failure"

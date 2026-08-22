@@ -4,7 +4,7 @@ Source: Hacker News /jobs listings (news.ycombinator.com/jobs).
 A second HN source — distinct from the monthly "Who is hiring?" thread.
 The /jobs page is a flat list of all jobs posted by HN users, with a
 short title (e.g. "Great Question (YC W21) Is Hiring Applied AI Interns")
-and a single link that usually takes the candidate to a YC company page
+and a single link that usually takes the principal to a YC company page
 or a careers site.
 
 This source has a different signal than hn_hiring:

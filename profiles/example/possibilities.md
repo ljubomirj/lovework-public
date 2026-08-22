@@ -1,14 +1,14 @@
 <!--
   Layer 3 (branching possibilities): template.
-  Future candidates should mirror this structure — one ## section per
+  Future principals should mirror this structure — one ## section per
   direction, with an explicit "matcher signal:" line on each.
 -->
 
 # Alex Example — Branching Possibilities
 
-> The candidate's *future branches* — directions worth pursuing, rooted at the
+> The principal's *future branches* — directions worth pursuing, rooted at the
 > present with the past in view. Anonymised template; replace with the
-> candidate's actual directions.
+> principal's actual directions.
 
 ### (a) AI/ML engineering — product company
 
@@ -26,7 +26,7 @@ with no salary at unknown-stage startups.
 
 ### (c) AI in healthcare — domain interest
 
-**+ve:** sector the candidate wants to grow into.
+**+ve:** sector the principal wants to grow into.
 **−ve:** no prior healthcare experience.
 
 **matcher signal:** MAYBE for ML/AI roles at healthcare startups (extra weight

@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -20,6 +22,8 @@ import config
 from enrichment import ENRICHMENT_VERSION
 from job_registry import _job_hash
 from wiki_store import WikiEntry
+
+logger = logging.getLogger(__name__)
 
 SEPARATOR = "=" * 72
 PREPARED_MARKER = "LoveWork status: PREPARED — not submitted"
@@ -51,6 +55,40 @@ def pack_slug(when: date, org: str, title: str) -> str:
         f"{when.strftime('%Y%m%d')}-{_slug_part(org, 40)}-"
         f"{_slug_part(title, 60)}-LoveWork"
     )
+
+
+def _principal_cases_root(principal: str = "lj") -> Path:
+    """LoveWork's principal-owned case root.
+
+    Ownership follows the workflow that created the case (docs/21, 07-30
+    restructure): ``-LoveWork`` packs are RW in lovework's own repo under
+    ``state/<principal>/applications/``, and the parent repo's unified
+    ``applications/`` view mirrors each pack as a read-only symlink down.
+    Fall back to the unified view only when the principal state dir is absent
+    (pre-migration / non-LJ setups).
+    """
+    state_path = config.STATE_DIR / principal.lower() / "applications"
+    if state_path.is_dir():
+        return state_path
+    return config.APPLICATIONS_DIR
+
+
+def _mirror_pack_in_unified_view(pack_dir: Path) -> None:
+    """Expose a state-owned pack in the parent repo's applications/ view.
+
+    The parent repo (LJ-work-2026/applications) is the unified human view:
+    principal-created dirs live there directly, while LoveWork-created packs
+    appear as relative symlinks pointing down into state/<principal>/applications.
+    """
+    try:
+        link_path = config.APPLICATIONS_DIR / pack_dir.name
+        if link_path.exists() or link_path.is_symlink():
+            return  # already mirrored
+        config.APPLICATIONS_DIR.mkdir(parents=True, exist_ok=True)
+        link_path.symlink_to(os.path.relpath(pack_dir, config.APPLICATIONS_DIR))
+        logger.info("[packs] Mirrored %s -> %s", link_path, pack_dir)
+    except OSError as exc:
+        logger.warning("[packs] Could not mirror pack %s in unified view: %s", pack_dir, exc)
 
 
 def _normalise_words(value: str) -> set[str]:
@@ -220,6 +258,7 @@ def prepare_go_cases(
     entries: Iterable[WikiEntry],
     *,
     cases_root: Path | None = None,
+    principal: str = "lj",
     today: date | None = None,
     only_new: bool = True,
     dry_run: bool = False,
@@ -229,7 +268,7 @@ def prepare_go_cases(
     ``only_new`` is used by normal pipeline runs.  Backfill tooling passes
     False to prepare an explicit historical GO report once.
     """
-    root = cases_root or config.APPLICATIONS_DIR
+    root = cases_root or _principal_cases_root(principal)
     current_date = today or date.today()
     existing_dirs = [path for path in root.iterdir() if path.is_dir()] if root.is_dir() else []
     results: list[PackResult] = []
@@ -240,9 +279,9 @@ def prepare_go_cases(
         if only_new and entry.lifecycle_status != "new":
             continue
         advert_hash = _job_hash(entry.org_name, entry.title, entry.url)
-        candidate_dirs = [path for path in existing_dirs if _matches_org(path.name, entry.org_name)]
+        matching_dirs = [path for path in existing_dirs if _matches_org(path.name, entry.org_name)]
         existing_pack = None
-        for directory in candidate_dirs:
+        for directory in matching_dirs:
             text_path = _case_text_path(directory)
             if text_path:
                 try:
@@ -256,7 +295,7 @@ def prepare_go_cases(
             continue
 
         recent_application = None
-        for directory in candidate_dirs:
+        for directory in matching_dirs:
             if _is_prepared(directory):
                 continue
             created = _directory_date(directory)
@@ -294,6 +333,10 @@ def prepare_go_cases(
         text_path = directory / f"{slug}.txt"
         text_path.write_text(_pack_text(entry, advert_hash, _enrichment_for(entry.url)), encoding="utf-8")
         existing_dirs.append(directory)
+        if cases_root is None:
+            # Production path: state-owned pack, mirrored into the parent
+            # repo's unified applications/ view as a symlink (docs/21).
+            _mirror_pack_in_unified_view(directory)
         results.append(PackResult(entry, "created", directory, "prepared for review; not submitted"))
     return results
 
@@ -372,11 +415,28 @@ def _list_field(block: str, heading: str) -> list[str]:
     return [line[4:].strip() for line in match.group("items").splitlines() if line.startswith("  - ")]
 
 
-def render_pack_report_section(results: Iterable[PackResult]) -> list[str]:
-    """Render a report section that makes GO-to-case handoff explicit."""
+def render_pack_report_section(
+    results: Iterable[PackResult], base_dir: Path | None = None
+) -> list[str]:
+    """Render a report section that makes GO-to-case handoff explicit.
+
+    ``base_dir`` is the directory of the report file the section is inserted
+    into; pack links are then real relative paths from the report to each pack
+    (packs live under ``state/<principal>/applications/``). When absent, the
+    legacy ``../applications/<name>/`` form is kept for callers that render
+    outside a report file.
+    """
     values = list(results)
     if not values:
         return []
+
+    def pack_link(result: PackResult) -> str:
+        if result.path is None:
+            return ""
+        if base_dir is not None:
+            return os.path.relpath(result.path, base_dir)
+        return f"../applications/{result.path.name}/"
+
     lines = ["## LoveWork application packs", ""]
     created = [result for result in values if result.status == "created"]
     skipped = [result for result in values if result.status != "created"]
@@ -386,12 +446,12 @@ def render_pack_report_section(results: Iterable[PackResult]) -> list[str]:
             lines.append(
                 f"- [{result.entry.score:.1f}] {result.entry.org_name} — {result.entry.title}"
             )
-            lines.append(f"  `../applications/{result.path.name}/`")
+            lines.append(f"  `{pack_link(result)}`")
         lines.append("")
     if skipped:
         lines.extend(["### Existing / not created", ""])
         for result in skipped:
-            location = f" (`../applications/{result.path.name}/`)" if result.path else ""
+            location = f" (`{pack_link(result)}`)" if result.path else ""
             lines.append(f"- {result.entry.org_name} — {result.entry.title}: {result.reason}{location}")
         lines.append("")
     return lines
@@ -399,7 +459,7 @@ def render_pack_report_section(results: Iterable[PackResult]) -> list[str]:
 
 def insert_pack_report_section(report_path: Path, results: Iterable[PackResult]) -> None:
     """Insert this run's pack hand-off directly after a full report's GO section."""
-    section = render_pack_report_section(results)
+    section = render_pack_report_section(results, base_dir=report_path.parent)
     if not section:
         return
     text = report_path.read_text(encoding="utf-8")

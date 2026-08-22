@@ -37,14 +37,14 @@ if config.FIRECRAWL_API_KEY:
         logger.warning(f"Firecrawl import failed: {e}")
 
 
-def _cache_path(url: str) -> Path:
+def _cache_path(url: str, cache_dir: Optional[Path] = None) -> Path:
     h = hashlib.sha256(url.encode()).hexdigest()[:16]
-    return config.CACHE_DIR / f"page_{h}.md"
+    return (cache_dir or config.CACHE_DIR) / f"page_{h}.md"
 
 
-def fetch_page(url: str, use_cache: bool = True) -> str:
+def fetch_page(url: str, use_cache: bool = True, cache_dir: Optional[Path] = None) -> str:
     """Fetch a URL and return markdown content. Uses disk cache."""
-    cache = _cache_path(url)
+    cache = _cache_path(url, cache_dir)
     if use_cache and cache.exists():
         text = cache.read_text(encoding="utf-8")
         logger.info(f"Cache hit {url} ({len(text)} chars)")
@@ -252,10 +252,13 @@ class SmartCrawler:
     Both produce the same outputs (CrawlDecision, List[ExtractedJob]).
     """
 
-    def __init__(self, llm: LLMClient, use_dspy: bool = False):
+    def __init__(
+        self, llm: LLMClient, use_dspy: bool = False, cache_dir: Optional[Path] = None
+    ):
         self.llm = llm
         self.visited: set = set()
         self.use_dspy = use_dspy
+        self.cache_dir = cache_dir
         self._dspy = None
         if use_dspy:
             try:
@@ -296,7 +299,7 @@ class SmartCrawler:
             self.visited.add(url)
 
             logger.info(f"[{org_name}] Crawling {url} (depth={depth})")
-            content = fetch_page(url)
+            content = fetch_page(url, cache_dir=self.cache_dir)
             if not content:
                 continue
 

@@ -2,7 +2,7 @@
 
 This directory describes **Mara Vale**, an invented person. It is designed to
 demonstrate the shape of a LoveWork profile and is not derived from any real
-candidate.
+principal.
 
 The profile is intentionally small. A real profile evolves through dialogue,
 decisions, corrections, and outcomes.

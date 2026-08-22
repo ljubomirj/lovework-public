@@ -39,17 +39,48 @@ def match_fields(match) -> dict:
     }
 
 
-def _format_entry(lines: List[str], e: "WikiEntry", show_age: bool = False) -> None:
-    """Format a single WikiEntry into the report lines."""
-    lines.append(f"### {e.org_name} — {e.title}")
+def _format_entry(
+    lines: List[str],
+    e: "WikiEntry",
+    show_age: bool = False,
+    index: int | None = None,
+    principal: str = "lj",
+) -> None:
+    """Format a single WikiEntry into the report lines.
+
+    Args:
+        lines: Output list to append to.
+        e: The entry to format.
+        show_age: Whether to show how long an entry has been open.
+        index: Ordinal position within its section (1-based). When set,
+               the heading is prefixed with "N. ".
+        principal: Principal name for building local-content links.
+    """
+    heading = f"### {e.org_name} — {e.title}"
+    if index is not None:
+        heading = f"### {index}. {e.org_name} — {e.title}"
+    if e.lifecycle_status == "new":
+        heading += " 🆕"
+    lines.append(heading)
     lines.append("")
     if e.url:
         lines.append(f"- **URL**: {e.url}")
     if e.discovery_url:
         date_suffix = f" ({e.discovery_date})" if e.discovery_date else ""
         lines.append(f"- **Found via**: [{e.source}]({e.discovery_url}){date_suffix}")
+    if not e.url and not e.discovery_url:
+        lines.append("- **URL**: _not available_")
     if e.location:
         lines.append(f"- **Location**: {e.location}")
+    # Local content links
+    safe_org = e.org_name.lower().replace(" ", "-").replace("(", "").replace(")", "").replace("'", "")
+    lines.append(f"- **Org wiki**: [/principals/{principal}/wiki/orgs/{safe_org}.md](</principals/{principal}/wiki/orgs/{safe_org}.md>)")
+    if e.primary_content_hash:
+        lines.append(
+            f"- **Cached advert**: [/principals/{principal}/cache/page_{e.primary_content_hash}.md]"
+            f"(</principals/{principal}/cache/page_{e.primary_content_hash}.md>)"
+            f" (via {e.primary_fetch_method}, {e.primary_fetched_at})"
+        )
     if e.assessment_status == "UNSCORED":
         lines.append("- **Score**: UNSCORED")
     else:
@@ -64,11 +95,6 @@ def _format_entry(lines: List[str], e: "WikiEntry", show_age: bool = False) -> N
         lines.append(f"- **Combined**: {e.combined_score}/10")
     if e.recommended_action:
         lines.append(f"- **Action**: {e.recommended_action}")
-    if e.primary_content_hash:
-        lines.append(
-            f"- **Primary evidence**: `{e.primary_content_hash[:12]}` "
-            f"via {e.primary_fetch_method} ({e.primary_fetched_at})"
-        )
     if e.alignment_matrix:
         lines.append("- **Evidence alignment**:")
         lines.extend(f"  - {item}" for item in e.alignment_matrix)
@@ -180,16 +206,21 @@ class WikiStore:
         self,
         entries: List[WikiEntry],
         profile_name: str = "LJ",
+        run_type: str = "full",
         pack_results=None,
     ) -> Path:
         """Save a daily run report.
 
         The filename includes an hourly timestamp suffix so multiple
         sweeps on the same calendar date produce distinct files.
+        The run type label ("full" or "incremental") replaces the role in
+        the filename so reports are identifiable by crawl type.
         """
         date = entries[0].date if entries else datetime.now().strftime("%Y-%m-%d")
         ts = datetime.now().strftime("%H%M%S")
-        path = self.reports_dir / f"{date}-{ts}-{profile_name.lower()}-report.md"
+        run_label = run_type.lower().replace(" ", "-")
+        profile_part = profile_name.split("-")[0].lower()
+        path = self.reports_dir / f"{date}-{ts}-{profile_part}-{run_label}-report.md"
 
         go = [e for e in entries if e.decision == "GO"]
         maybe = [e for e in entries if e.decision == "MAYBE"]
@@ -200,8 +231,9 @@ class WikiStore:
         long_lasting = [e for e in entries if e.lifecycle_status == "long_lasting"]
         still_open = [e for e in entries if e.lifecycle_status == "still_open"]
 
+        header_type = run_type.upper().replace("-", " ")
         lines = build_header(
-            run_type="FULL SWEEP",
+            run_type=header_type,
             profile_label=profile_name,
             sources=None,  # full sweep covers all 8; header explainer says so
         )
@@ -209,15 +241,20 @@ class WikiStore:
         if lines and lines[-2] == "---":
             lines = lines[:-2]
 
+        # Extract principal name from profile label (e.g. "LJ-general" → "lj")
+        principal_name = profile_name.split("-")[0].lower()
+
         # New listings section
         if new_jobs:
             lines.append(f"## New Listings ({len(new_jobs)})")
             lines.append("")
             lines.append("First time seen by the crawler. Fresh opportunities.")
             lines.append("")
-            for e in sorted(new_jobs, key=lambda x: x.score, reverse=True):
+            for i, e in enumerate(
+                sorted(new_jobs, key=lambda x: x.score, reverse=True), start=1
+            ):
                 if e.decision in ("GO", "MAYBE"):
-                    _format_entry(lines, e)
+                    _format_entry(lines, e, index=i, principal=principal_name)
             lines.append("")
 
         # Long-lasting (suspicious)
@@ -229,8 +266,10 @@ class WikiStore:
                 "Score is lowered accordingly."
             )
             lines.append("")
-            for e in sorted(long_lasting, key=lambda x: x.score, reverse=True):
-                _format_entry(lines, e, show_age=True)
+            for i, e in enumerate(
+                sorted(long_lasting, key=lambda x: x.score, reverse=True), start=1
+            ):
+                _format_entry(lines, e, show_age=True, index=i, principal=principal_name)
             lines.append("")
 
         for section, items in (("GO", go), ("MAYBE", maybe), ("FLAG", flag), ("DROP", kill)):
@@ -238,8 +277,10 @@ class WikiStore:
                 continue
             lines.append(f"## {section} ({len(items)})")
             lines.append("")
-            for e in sorted(items, key=lambda x: x.score, reverse=True):
-                _format_entry(lines, e)
+            for i, e in enumerate(
+                sorted(items, key=lambda x: x.score, reverse=True), start=1
+            ):
+                _format_entry(lines, e, index=i, principal=principal_name)
             lines.append("")
             if section == "GO" and pack_results:
                 from application_packs import render_pack_report_section

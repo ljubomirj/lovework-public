@@ -41,7 +41,7 @@ LoveWork ultimately needs three linked simulations:
 | Simulation | Question it must answer | Current starting point |
 |---|---|---|
 | **Person** | What work would this person genuinely like, be able to do, and grow through? | Three-layer profile, soul, work authorization, feedback, and outcomes. |
-| **Company / hiring system** | What is this organisation actually trying to hire; how will it perceive this candidate; what evidence or route would change the result? | Advert enrichment, provenance, prior-contact history, reach assessment, and application angle. |
+| **Company / hiring system** | What is this organisation actually trying to hire; how will it perceive this principal; what evidence or route would change the result? | Advert enrichment, provenance, prior-contact history, reach assessment, and application angle. |
 | **Process / harness** | Which observations, questions, experiments, and actions are worth taking next—and how reliable is the system making that call? | Registry, decision ledger, regression cases, and reflection loop. |
 
 The output is a **counterfactual rehearsal**, not a claim to predict a life
@@ -106,7 +106,7 @@ The company model deserves equal seriousness. A role is not only a title and
 requirements list: it is a hiring manager's problem, a team at a particular
 stage, an applicant funnel, an ATS filter, budget, risk tolerance, and a
 possibly unstated view of what would count as convincing evidence. LoveWork
-should therefore represent both **candidate fit** and **company receptivity**.
+should therefore represent both **principal fit** and **company receptivity**.
 High intellectual fit with low screening reach is not a bad recommendation;
 it is a different process hypothesis: perhaps “find an introduction”, “show
 the speech-product evidence”, or “use this as a gap signal”.

@@ -1,4 +1,4 @@
-"""Small, deterministic candidate-fact retriever for grounded matching."""
+"""Small, deterministic principal-fact retriever for grounded matching."""
 
 from __future__ import annotations
 
@@ -38,21 +38,21 @@ def _expand(tokens: set[str]) -> set[str]:
 
 
 @dataclass(frozen=True)
-class CandidateFact:
+class PrincipalFact:
     text: str
     source: str
     tokens: frozenset[str]
 
 
-class CandidateEvidenceIndex:
+class PrincipalEvidenceIndex:
     """Retrieve high-overlap profile/bio paragraphs without another LLM call."""
 
     def __init__(self, profile_text: str, bio_text: str = ""):
         self.facts = self._chunk(profile_text, "profile") + self._chunk(bio_text, "bio-long")
 
     @staticmethod
-    def _chunk(text: str, source: str) -> list[CandidateFact]:
-        facts: list[CandidateFact] = []
+    def _chunk(text: str, source: str) -> list[PrincipalFact]:
+        facts: list[PrincipalFact] = []
         heading = source
         for raw in re.split(r"\n\s*\n", text):
             paragraph = " ".join(line.strip() for line in raw.splitlines()).strip()
@@ -64,12 +64,12 @@ class CandidateEvidenceIndex:
             tokens = _tokens(paragraph)
             if len(tokens) < 3:
                 continue
-            facts.append(CandidateFact(paragraph[:1200], f"{source}: {heading}", frozenset(tokens)))
+            facts.append(PrincipalFact(paragraph[:1200], f"{source}: {heading}", frozenset(tokens)))
         return facts
 
-    def retrieve(self, query: str, limit: int = 8) -> list[CandidateFact]:
+    def retrieve(self, query: str, limit: int = 8) -> list[PrincipalFact]:
         query_tokens = _expand(_tokens(query))
-        ranked: list[tuple[float, CandidateFact]] = []
+        ranked: list[tuple[float, PrincipalFact]] = []
         for fact in self.facts:
             overlap = query_tokens & set(fact.tokens)
             if not overlap:
@@ -86,7 +86,7 @@ class CandidateEvidenceIndex:
     def format_for_matcher(self, query: str, limit: int = 12) -> str:
         facts = self.retrieve(query, limit=limit)
         if not facts:
-            return "No candidate evidence retrieved. Do not infer missing experience."
+            return "No principal evidence retrieved. Do not infer missing experience."
         lines = []
         for fact in facts:
             marker = " [CONCRETE ARTIFACT]" if set(fact.tokens) & ARTIFACT_TERMS else ""
@@ -95,9 +95,9 @@ class CandidateEvidenceIndex:
 
 
 class EvidenceGroundedMatcher:
-    """Drop-in wrapper that supplies retrieved candidate facts to a matcher."""
+    """Drop-in wrapper that supplies retrieved principal facts to a matcher."""
 
-    def __init__(self, matcher, evidence_index: CandidateEvidenceIndex):
+    def __init__(self, matcher, evidence_index: PrincipalEvidenceIndex):
         self.matcher = matcher
         self.evidence_index = evidence_index
 
@@ -113,9 +113,9 @@ class EvidenceGroundedMatcher:
         evidence = self.evidence_index.format_for_matcher(query)
         grounded_description = (
             f"{job_description}\n\n"
-            "--- RETRIEVED CANDIDATE EVIDENCE ---\n"
+            "--- RETRIEVED PRINCIPAL EVIDENCE ---\n"
             f"{evidence}\n"
-            "--- END RETRIEVED CANDIDATE EVIDENCE ---"
+            "--- END RETRIEVED PRINCIPAL EVIDENCE ---"
         )
         return self.matcher.match(
             job_title,

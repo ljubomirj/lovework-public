@@ -18,7 +18,7 @@ to test it.
 
 ## Separate the questions
 
-For candidate `p`, role `r`, company `c`, at time `t`, the current matcher is
+For principal `p`, role `r`, company `c`, at time `t`, the current matcher is
 best understood as a **fit / utility** estimate:
 
 ```text
@@ -32,11 +32,11 @@ uncertainties:
 ```text
 P(role is real and still open)
 P(company can and intends to hire)
-P(candidate is viable: work authorisation, timing, basics)
-P(interview | viable candidate, company, role)
+P(principal is viable: work authorisation, timing, basics)
+P(interview | viable principal, company, role)
 P(offer | interview)
-P(candidate accepts | offer)
-P(candidate thrives after accepting)
+P(principal accepts | offer)
+P(principal thrives after accepting)
 ```
 
 The chance that a pursued lead becomes accepted work is a chain of conditional

@@ -1,6 +1,6 @@
 # Alex Example — Full Bio
 
-> Longer version of the candidate's background. Not loaded by default (token cost)
+> Longer version of the principal's background. Not loaded by default (token cost)
 > but available for deep context.
 
 [This is where you'd put your full bio — the longer version of your CV, with

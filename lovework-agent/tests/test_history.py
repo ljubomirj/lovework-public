@@ -8,8 +8,7 @@ extracts date, company, role, and rejection markers.
 `scan_history(org)` wraps it in PriorContact (used by the matcher).
 """
 
-import pytest
-
+import history
 from history import scan_applications, scan_history, _org_aliases
 
 
@@ -64,6 +63,19 @@ def test_scan_applications_no_rejection_marker(isolated_config):
     assert apps_found[0].rejection_date is None
 
 
+def test_unstarted_agent_to_agent_interview_is_not_an_application(isolated_config):
+    """Preparing an ATA agent must not trigger reapply/outcome history."""
+    apps = isolated_config["applications"]
+    d = apps / "20260723-Hyperspell-Product_Engineer-LoveWork-ATA"
+    d.mkdir()
+    (d / f"{d.name}.txt").write_text(
+        "LoveWork ATA status: PREPARED — interview not started\n",
+        encoding="utf-8",
+    )
+
+    assert scan_applications("Hyperspell", applications_dir=apps) == []
+
+
 def test_scan_history_summary(isolated_config):
     """The scan_history wrapper produces a human-readable summary."""
     apps = isolated_config["applications"]
@@ -75,6 +87,28 @@ def test_scan_history_summary(isolated_config):
     prior = scan_history("Test_Co", use_gmail=False, applications_dir=apps)
     assert "Applied 2025-12-20" in prior.summary()
     assert "rejection received 2026-01-10" in prior.summary()
+
+
+def test_scan_history_uses_principal_gmail_scope(monkeypatch, isolated_config, tmp_path):
+    """Prior-contact scans must follow VJ's mailbox policy, not LJ defaults."""
+    calls = []
+    credential_home = tmp_path / "petroula-vj"
+
+    def fake_gapi(*args, **kwargs):
+        calls.append((args, kwargs))
+        return []
+
+    monkeypatch.setattr("gmail_accessor.run_gapi", fake_gapi)
+    prior = history.scan_history(
+        "Acme",
+        applications_dir=isolated_config["applications"],
+        gmail_label="VJ-jobs",
+        gmail_credential_home=credential_home,
+    )
+
+    assert prior.gmail_events == []
+    assert calls[0][0][2].startswith("label:VJ-jobs ")
+    assert calls[0][1] == {"credential_home": credential_home}
 
 
 # ── Alias generation ────────────────────────────────────────────────────

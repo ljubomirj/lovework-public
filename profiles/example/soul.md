@@ -52,4 +52,4 @@ When a job listing comes in, the matcher should:
 ## Personal Nature
 
 This is a personal crawler — findings are private. The advantage over J&J is
-that I am not competing with 1000 other candidates for the same lead.
+that I am not competing with 1000 other applicants for the same lead.

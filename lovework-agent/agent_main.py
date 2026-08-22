@@ -4,7 +4,7 @@ LoveWork — interactive agent CLI.
 
 Usage:
     python -m lovework_agent --profile lj --role general
-    python -m lovework_agent --profile vj --role platform-sre --query "Find me UK-based SRE roles"
+    python -m lovework_agent --profile vj --role data-statistics-pricing --query "Find London pricing and actuarial analyst roles"
     python -m lovework_agent --autonomous --profile lj --role general  # same as today's cron
 
 Starts a REPL where you can ask the agent questions about jobs.
@@ -29,7 +29,7 @@ logger = logging.getLogger("lovework-agent")
 
 def main():
     parser = argparse.ArgumentParser(description="LoveWork — personal job discovery agent")
-    parser.add_argument("--profile", default="lj", choices=["lj", "vj"], help="Candidate profile")
+    parser.add_argument("--profile", default="lj", choices=["lj", "vj"], help="Principal profile")
     parser.add_argument("--role", default=None, help="Role file under profiles/<name>/roles/")
     parser.add_argument("--query", default=None, help="Single query (non-interactive)")
     parser.add_argument("--autonomous", action="store_true", help="Run the full pipeline (cron mode)")

@@ -199,12 +199,14 @@ def append_passive_outcomes(
     *,
     run_id: str = "",
     use_gmail: bool = True,
+    history_kwargs: dict | None = None,
 ) -> Path:
     """Append passively discovered actions/outcomes from applications/ and Gmail.
 
     This intentionally does not require a user action. It reuses the existing
     history scanner and records org-level outcome evidence when exact advert
-    attribution is not available.
+    attribution is not available. ``history_kwargs`` keeps a principal's
+    application and Gmail scope aligned with its discovery run.
     """
     dataset_dir.mkdir(parents=True, exist_ok=True)
     path = dataset_dir / "outcomes.jsonl"
@@ -226,7 +228,7 @@ def append_passive_outcomes(
             try:
                 from history import scan_history
 
-                prior = scan_history(org, use_gmail=use_gmail)
+                prior = scan_history(org, use_gmail=use_gmail, **(history_kwargs or {}))
             except Exception as e:
                 logger.debug(f"Passive outcome scan failed for {org}: {e}")
                 continue

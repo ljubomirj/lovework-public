@@ -160,7 +160,8 @@ def test_check_token_authenticated(monkeypatch, tmp_path):
 def test_check_token_revoked(monkeypatch, tmp_path):
     profile = tmp_path / "profiles" / "hermel"
     profile.mkdir(parents=True)
-    (profile / "google_token.json").write_text("{}", encoding="utf-8")
+    token = profile / "google_token.json"
+    token.write_text("{}", encoding="utf-8")
     revoked = Exception("invalid_grant: Token has been expired or revoked.")
 
     monkeypatch.setattr(notify, "_load_credentials", lambda path: _FakeCreds(error=revoked))
@@ -169,6 +170,25 @@ def test_check_token_revoked(monkeypatch, tmp_path):
     assert result["ok"] is False
     assert result["status"] == "revoked"
     assert "invalid_grant" in str(result["detail"])
+    # Blast-radius observability: the token file age should be in the detail
+    # so an incident packet immediately shows how long the token has been dead.
+    assert "token file mtime" in str(result["detail"])
+
+
+def test_check_token_revoked_missing_token_file_age_is_omitted(monkeypatch, tmp_path):
+    profile = tmp_path / "profiles" / "hermel"
+    profile.mkdir(parents=True)
+    token = profile / "google_token.json"
+    token.write_text("{}", encoding="utf-8")
+    revoked = Exception("invalid_grant: Token has been expired or revoked.")
+
+    monkeypatch.setattr(notify, "_load_credentials", lambda path: _FakeCreds(error=revoked))
+    monkeypatch.setattr(notify, "_token_file_age", lambda path: "")  # stat failure path
+
+    result = notify.check_token(profile)
+    assert result["ok"] is False
+    assert result["status"] == "revoked"
+    assert "token file mtime" not in str(result["detail"])
 
 
 def test_check_token_missing_file(tmp_path):

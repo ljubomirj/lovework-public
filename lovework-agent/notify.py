@@ -52,6 +52,23 @@ def _gapi_env() -> dict[str, str]:
 # refresh without writing anything back, so the wrapper can detect a dead
 # credential before the crawl starts (LEARNINGS 2026-07-25 prevention).
 
+def _token_file_age(token_path: Path) -> str:
+    """Human-readable age of the token file for blast-radius sizing.
+
+    A revoked token is usually dead for days before a full-crawl incident
+    surfaces it; the file mtime shows when it last refreshed (or was
+    re-consented).  Returning it in the check detail lets the incident
+    packet answer "how long have crawls been skipping?" without digging
+    into run ledgers.
+    """
+    try:
+        mtime = datetime.fromtimestamp(token_path.stat().st_mtime)
+        age_days = (datetime.now() - mtime).total_seconds() / 86400
+        return f" (token file mtime {mtime:%Y-%m-%d %H:%M}, age {age_days:.1f}d)"
+    except OSError:
+        return ""
+
+
 def _load_credentials(token_path: Path):
     """Load an authorized-user credential from the Hermes profile token file."""
     from google.oauth2.credentials import Credentials
@@ -94,7 +111,8 @@ def check_token(hermes_home: Path = _HERMES_HOME) -> dict[str, str | bool]:
                 "ok": False,
                 "status": "revoked",
                 "detail": "Gmail OAuth token expired or revoked (invalid_grant); "
-                          "re-run the Google OAuth setup flow for the HermeL profile",
+                          "re-run the Google OAuth setup flow for the HermeL profile"
+                          + _token_file_age(token_path),
             }
         return {"ok": False, "status": "error", "detail": message[:300]}
     return {

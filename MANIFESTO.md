@@ -6,7 +6,8 @@ attention, timing, information, confidence, circumstance, and access to the
 right people.
 
 We search for work episodically: a few hurried weeks every few years, often
-while money and patience are running out. Organisations search continuously.
+while money and patience are running out. Looking for work, both paid-a job,
+and unpaid, is a full time job of its own. Organisations search continuously.
 Recruiters search continuously. Markets move continuously. The person seeking
 meaningful work is the only participant expected to treat discovery as an
 occasional side project.
@@ -54,6 +55,9 @@ The important question is not simply, "Can this person get this job?" It is:
 > Would a future version of this person be glad that they pursued this
 > opportunity now?
 
+<!-- the deep layer beneath this manifesto — coordination = cooperation
+     + competition, coercion as synchroniser, work as the coordination
+     machinery — lives in docs/39-coordination-speculative.md -->
 ## Serendipity, luck on the wings
 
 A personal agent that only scrapes job websites is a better search box.
@@ -93,6 +97,18 @@ market.
 
 The aim is simple to state and difficult to achieve: help more people realise
 their potential intentionally, rather than only by lucky coincidence.
+
+---
+
+> **Work on what you like — love your work.**
+
+*The motto's arc:* the liking comes first, and can only come first — before the
+work exists there is nothing to love, only a field you find interesting and
+choose to labour in. The love arrives later, directed at what the working
+deposits: your work, the oeuvre, the thing you made. And sometimes you gift
+that to the world — and like that too.
+
+*Every worker a principal.*
 
 ---
 

@@ -1,6 +1,6 @@
 # LoveWork
 
-**Work that you love, so you never work a day in your life.**
+**Work what you love and love your work.**
 
 LoveWork is a work-discovery agent, personal guide to achieving your life's
 work. Movie stars and successful creatives have human agents who look
@@ -24,10 +24,10 @@ already useful to discuss, test, and build upon.
 ## Start here
 
 - [Manifesto](MANIFESTO.md) — why LoveWork should exist.
-- [Why LoveWork](docs/why-lovework.md) — the problem with episodic job search.
-- [Profile model](docs/profile-model.md) — representing a person without
+- [Why LoveWork](why-lovework.md) — the problem with episodic job search.
+- [Profile model](profile-model.md) — representing a person without
   reducing them to a CV.
-- [Intelligence layer](docs/intelligence-layer.md) — the longitudinal judgment
+- [Intelligence layer](docs/09-intelligence-layer.md) — the longitudinal judgment
   loop at the centre of the system.
 - [Architecture](ARCHITECTURE.md) — the current technical shape.
 - [Roadmap](ROADMAP.md) — what exists and what comes next.

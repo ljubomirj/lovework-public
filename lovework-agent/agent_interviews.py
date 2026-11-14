@@ -31,8 +31,8 @@ class AgentRuntime:
 
 
 DEFAULT_AGENT_RUNTIMES = (
-    AgentRuntime("macbook2", "hermeo", "telegram", "hermeo_lj_bot"),
-    AgentRuntime("gigul2", "hermel", "telegram", "hermel_lj_bot"),
+    AgentRuntime("host-b", "profile-b", "telegram", "profile-b_lj_bot"),
+    AgentRuntime("host-a", "profile-a", "telegram", "profile-a_lj_bot"),
 )
 
 
@@ -78,7 +78,7 @@ def _current_host() -> str:
 
 
 def _runtime_manifest() -> dict[str, object]:
-    preferred = next(item for item in DEFAULT_AGENT_RUNTIMES if item.host == "macbook2")
+    preferred = next(item for item in DEFAULT_AGENT_RUNTIMES if item.host == "host-b")
     host = _current_host()
     prepared_by = next(
         (item for item in DEFAULT_AGENT_RUNTIMES if item.host == host),

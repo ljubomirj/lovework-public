@@ -52,7 +52,10 @@ from history import scan_history, PriorContact
 from wiki_store import WikiEntry, WikiStore
 
 # Default agent variables
-registry = JobRegistry()
+# The registry is the PRINCIPAL's, named by the caller's runtime — a vj call
+# must not read lj's rows (ch15 boundary; the same default-blind class the
+# wiki and matcher were fixed for on 2026-10-09).
+registry = JobRegistry(csv_path={registry_csv!r})
 profile_name = {profile_name!r}
 role = {role!r}
 
@@ -70,6 +73,7 @@ def _make_sandbox_script(
     vars_file: str,
     initial_vars: Dict[str, Any],
     lovework_agent_path: str,
+    registry_csv: str,
 ) -> str:
     """Wrap user code with sandbox header that exposes agent variables."""
     header = SANDBOX_HEADER.format(
@@ -78,6 +82,7 @@ def _make_sandbox_script(
         role=role,
         vars_file=vars_file,
         initial_vars=json.dumps(initial_vars, default=str),
+        registry_csv=registry_csv,
     )
 
     # Footer: write back any new variables the user added at module level
@@ -109,7 +114,7 @@ def _read_persistent_vars(vars_file: Path) -> Dict[str, Any]:
         return {}
 
 
-def run_python_tool_factory(profile_name: str, role: str) -> AgentTool:
+def run_python_tool_factory(profile_name: str, role: str, runtime=None) -> AgentTool:
     """Tool: execute Python code in a sandboxed subprocess.
 
     Exposes:
@@ -118,9 +123,21 @@ def run_python_tool_factory(profile_name: str, role: str) -> AgentTool:
     - `scan_history(org_name)` — history lookup function
     - All of `config` module
     - Persistent variables across calls (read from / write to a temp file)
+
+    `runtime` is the principal's runtime and names the state this sandbox reads
+    and writes. It is how the MCP tool service calls this (`tool_service.py`),
+    and omitting it once made the tool raise TypeError at that call site while
+    the tests — which called the two-argument form — stayed green. Without a
+    runtime the profile is resolved by name, never by the module default.
     """
+    if runtime is None:
+        from principal_runtime import resolve_principal_runtime
+
+        runtime = resolve_principal_runtime(profile_name)
+    cache_dir = Path(runtime.cache_dir)
     lovework_agent_path = str(config.AGENT_ROOT)
-    vars_file = config.CACHE_DIR / "_sandbox_vars.json"
+    vars_file = cache_dir / "_sandbox_vars.json"
+    registry_csv = cache_dir / "jobs.csv"
 
     async def execute(tool_call_id: str, params: Dict[str, Any], abort_event=None, on_update=None) -> AgentToolResult:
         code = params.get("code", "")
@@ -141,6 +158,7 @@ def run_python_tool_factory(profile_name: str, role: str) -> AgentTool:
             vars_file=str(vars_file),
             initial_vars=initial_vars,
             lovework_agent_path=lovework_agent_path,
+            registry_csv=str(registry_csv),
         )
 
         # Run in a subprocess
@@ -152,6 +170,14 @@ def run_python_tool_factory(profile_name: str, role: str) -> AgentTool:
             env["PYTHONPATH"] = venv_site + os.pathsep + env.get("PYTHONPATH", "")
             env["DEEPSEEK_API_KEY"] = config.LLM_API_KEY or ""
             env["FIRECRAWL_API_KEY"] = config.FIRECRAWL_API_KEY or ""
+            # Exa resolves from the host-local credential file too (the cron
+            # gateway has no shell env), so ask the same authority the crawler uses.
+            try:
+                from web_search import api_key as _search_key
+
+                env["EXA_API_KEY"] = _search_key("EXA_API_KEY")
+            except Exception:
+                pass
 
             proc = subprocess.run(
                 [sys.executable, "-I", "-c", script],

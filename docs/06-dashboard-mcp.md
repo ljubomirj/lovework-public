@@ -1,7 +1,7 @@
 # Chapter 06 — Dashboard + MCP Server
 
 > **Audience:** agents (the MCP half) and operators (the dashboard half).
-> **See also:** [`../DECISIONS.md`](../DECISIONS.md) D18; [`../agents/skills/lovework/SKILL.md`](../agents/skills/lovework/SKILL.md) "Dashboard + MCP server" section.
+> **See also:** [`../DECISIONS.md`](../DECISIONS.md) D18; [`../agents/skills/lovework-hydrate/SKILL.md`](../agents/skills/lovework-hydrate/SKILL.md) "Dashboard + MCP server" section.
 
 ## One process, two faces
 
@@ -22,15 +22,130 @@ over the SQLite registry, or duplicating the read logic.
 ## Starting it
 
 ```bash
-cd ~/LJ-work-2026/lovework/lovework-agent
+cd ~/lovework-engine/lovework-agent
 ../venv/bin/python3 dashboard_server.py [--port 8765]
 ```
 
 The `LOVEWORK_ROOT` path is resolved by probing principals, preferring the
-location-agnostic `~/LJ-work-2026/lovework` (works on all machines), then the
-legacy `~/Documents/LJ-work-2026/lovework` (macbook2) and
-`/opt/ljubomir/LJ-work-2026/lovework` (gigul2), honoring an env var first. No
-manual setup needed on any of LJ's machines.
+canonical `lovework-engine/` inside the workspace (all machines; the ~/Documents location
+was retired 2026-09-20 — quota'd iCloud+iDrive sync roots), then
+`/srv/lovework-dev/lovework-engine` (host-a dev), honoring an env
+var first. No manual setup needed on any of LJ's machines.
+
+**Principal boundary (2026-09-21; narrowed again 2026-10-08).** The browser
+surface publishes only the allow-listed operator-facing areas (`wiki`, `logs`,
+`cache/runs`, `cache/incidents`) — **not `cache` as a directory**: a bare
+`cache` entry published the registry, downloaded source pages and enrichment,
+contradicting the boundary's own stated rule, and was removed.
+
+**The case directories are published too (2026-10-09).** `applications` joins the
+list so a GO's application pack is openable from the wiki ("when applying, the
+principal should not start from Zero" — LJ). Each pack carries a fixed-name
+`application_pack.md` (advert + fetched content, the application form, the
+tailored CV and letter, the company/hiring background, and the assessment), and
+the wiki index links it from every GO listing. **The boundary holds where it
+matters:** LJ's *manual* cases are symlinks out of the state tree, and the
+serving layer refuses a path that resolves outside its root — measured: a
+LoveWork pack page → 200, a symlinked manual case → 404.
+
+**The one exception, narrowed by name (2026-10-08).** `cache` is published again
+so that a report's `- **Cached advert**:` line can be opened — and it is
+narrowed to the fetch cache's own advert pages by `AREA_FILE_ALLOW`, a filename
+allow-list (`^page_[0-9a-f]{16}\.md$`) applied before serving. Everything else
+under `cache/` still 404s, including a *directory* request, so the registry
+(`jobs.csv`), the ledgers, the enrichment caches, `search/`, `archive/` and
+`receipts/` are unreachable. Verified end to end: a real advert page → 200;
+`jobs.csv`, the cache listing, and the historical 64-hex names → 404. The
+publication is what makes the evidence trail *usable*; the complementary fix is
+on the writing side (`enrichment.LeadEnricher._remember_in_fetch_cache`), since
+only the provider fallback used to write the file the link names.
+
+Read bindings share one authorization helper
+(`principal_runtime.authorize_principal`): a binding serves its own principal
+unless others are explicitly allowed, unknown names are refused, and a refusal
+never returns data. The MCP surface exposes `asof_explain` (principal-scoped,
+bounded, cited).
+
+## Security
+
+The dashboard and the MCP face read every principal's wiki, reports and logs,
+and MCP exposes `run_python`, so the server is **loopback-only by default**
+(`--host` defaults to `127.0.0.1`). LAN access is explicit: `--host 0.0.0.0`.
+
+Authentication turns on when a token is set, via `--token <secret>` or the
+`LOVEWORK_DASHBOARD_TOKEN` environment variable:
+
+```bash
+../venv/bin/python3 dashboard_server.py --host 0.0.0.0 --token "$LOVEWORK_DASHBOARD_TOKEN"
+```
+
+With a token set, **every route** requires it — `/`, `/dashboard/`, `/health`,
+`/api/*`, `/docs/*`, `/principals/*` and `POST /mcp`:
+
+| Client | Form |
+|--------|------|
+| API / MCP | `Authorization: Bearer <token>`, or `?token=<token>` |
+| Browser | `/?token=<token>` on the first load; the server replies with an HttpOnly, `SameSite=Lax` `lovework_token` cookie, and later requests need only the cookie |
+
+Missing or wrong credentials get `401` with a short plain-text body that never
+echoes the token. The comparison uses `hmac.compare_digest`, and the token is
+never logged (`?token=…` is redacted to `token=REDACTED` in the request line).
+An MCP client talking to a token-protected server must send the token too; the
+Hermes `url:` form can carry it as `http://127.0.0.1:8765/mcp?token=<token>`.
+
+**Refusal rule:** a non-loopback bind with no token is a startup error, not a
+warning. The process exits non-zero (2) *before* opening a socket and names
+both fixes: `--host 127.0.0.1`, or `--token` / `LOVEWORK_DASHBOARD_TOKEN`.
+
+Startup logs one line with the effective URL, whether auth is on, and whether
+the bind is network-reachable:
+
+```
+INFO: LoveWork dashboard: http://127.0.0.1:8765  auth=on  bind=LAN-exposed (0.0.0.0)
+```
+
+### `--no-auth` — internal-trial LAN mode (deliberate opt-out)
+
+```bash
+../venv/bin/python3 dashboard_server.py --host 0.0.0.0 --no-auth
+LOVEWORK_DASHBOARD_NO_AUTH=1 ../venv/bin/python3 dashboard_server.py --host 0.0.0.0
+```
+
+`--no-auth` (or `LOVEWORK_DASHBOARD_NO_AUTH=1`) means **authentication is off
+for this process**: no token is required, every route — `/`, `/dashboard/`,
+`/health`, `/api/*`, `/docs/*`, `/principals/*` and `POST /mcp` — answers
+credential-free requests, and the MCP `run_python` tool is reachable without
+credentials too.
+
+The flag **is** the explicit operator consent: it is the only thing that
+bypasses the refusal rule, and the bypass is loud on purpose:
+
+```
+WARNING: AUTH DISABLED (--no-auth / $LOVEWORK_DASHBOARD_NO_AUTH): every route on
+         this process, including POST /mcp and its run_python tool, is served
+         without credentials
+INFO: LoveWork dashboard: http://127.0.0.1:8765  auth=off  bind=LAN-exposed (0.0.0.0)
+      (internal trial) — any exposure beyond the trusted home LAN must use --token
+```
+
+If both `--no-auth` and a token are given, the token is **ignored** (with a
+warning that names it as ignored); `--no-auth` wins. The token value itself is
+never logged.
+
+**When it must not be used.** Only for the internal R&D trial where LJ is
+patient#0 using his own data and persona on the trusted home LAN (only lj, pk,
+vj, kj at home). Do **not** use `--no-auth` when the process is reachable from
+anything beyond that LAN — a café/hotel/office network, a VPN, a container
+network, a cloud host, a port-forward, a reverse-proxy tunnel, or any bind on a
+machine that is not on the home LAN. In all of those cases use
+`--host 0.0.0.0 --token "$LOVEWORK_DASHBOARD_TOKEN"` (or keep the loopback
+default and tunnel with credentials). Because the MCP face exposes
+`run_python`, an unauthenticated non-home-LAN bind is remote code execution,
+not just a data leak.
+
+Safety that is **unchanged**: without `--no-auth` (and without a token) a
+non-loopback bind still refuses to start with exit 2, and the default bind is
+still loopback `127.0.0.1`.
 
 ## The dashboard (human face)
 
@@ -55,6 +170,29 @@ Its sections are:
 - **Top Jobs** — top GO/MAYBE from the latest report.
 
 Plus JSON endpoints: `GET /health`, `GET /api/registry`, `GET /api/progress`.
+
+### Documentation surface (shared, not per-principal)
+
+Documentation is the one surface on this process that does not belong to a
+principal, so it is served from the repo, not from `state/`:
+
+- `GET /docs/` → 302 to **`/docs/html/`**, the docsify site root (sidebar,
+  in-page TOC; the client fetches each chapter as raw markdown).
+- `GET /docs/<chapter>.md` → the chapter **rendered server-side** (same renderer
+  as reports: breadcrumb, link rewriting, `?raw` for the source).
+  `/docs/00-index.md` is the documented entry point, linked from the root index
+  and the navbar.
+- `GET /docs/html/<file>` → plain static files for the SPA (`index.html`, the raw
+  `.md` it fetches, `lovework-agent/*.py`, …).
+
+`docs/html/` is a farm of relative symlinks, so this subtree is authorised by the
+**resolved** path rather than the URL prefix: `README.LJ`, `profiles/<principal>/`,
+`state/`, `applications/`, `credentials/`, dotfiles, and anything resolving
+outside the repo answer **404**, even when a farm link points at them
+(`/docs/html/README.LJ`, `/docs/html/profiles/example/soul.md`,
+`/docs/html/../README.LJ` are covered by tests). `profiles/example/` is allowed.
+A *public* copy is a different job: `./serve-docs.sh build` dereferences the farm
+into a static tree and excludes the same private set.
 
 ## The MCP face (agent face)
 
@@ -100,8 +238,12 @@ params, `-32603` internal).
 serves all four principals. `run_pipeline` is the "go find me jobs" button as
 a tool: it crawls, scores, updates registry+wiki, writes a dated report, and
 returns `{entries, disappeared, report_path, gos, maybes}`. **Long-running** —
-incremental crawl 3–15 min, full run 20–30 min. The MCP call blocks; the
-client timeout must be ≥600s for full runs.
+an incremental crawl takes 45–90 min and a full sweep 1.8–8.8 h (measured;
+[chapter 30](30-inference-chain-and-data-map.md) §4). A full sweep must **not** be
+driven through this blocking call: an 8.8 h HTTP request is unusable and will be
+cut off long before the run ends. Run sweeps through the wrapper/cron path
+(`lovework-crawl.sh`, which detaches and lets the dashboard show progress) and
+reserve `run_pipeline` for bounded single-source work.
 
 ## Why no `mcp` / `fastmcp` SDK dependency?
 
@@ -119,7 +261,7 @@ appear in every conversation alongside built-ins like `terminal`.
 
 1. Install the optional MCP client dep on each host where it should be active:
    ```bash
-   pip install mcp   # not currently installed on macbook2
+   pip install mcp   # not currently installed on host-b
    ```
 2. Add to `~/.hermes-<host>/config.yaml`:
    ```yaml

@@ -14,17 +14,17 @@ A specialised source that complements `gmail_lj_jobs`. LJ's flow:
 The cron path for this is non-trivial because LinkedIn requires login for
 search results. We support two paths:
 
-  - **Seeds file** (`profiles/lj/linkedin_seeds.md`): LJ drops a LinkedIn
+  - **Seeds file** (`profiles/example/linkedin_seeds.md`): LJ drops a LinkedIn
     search/job URL in here when he wants the agent to follow it. The
     source fetches the page, harvests all `linkedin.com/jobs/view/...`
     URLs from the HTML, and feeds them through the matcher. If LinkedIn
     returns a login wall (HTTP 999 or the page is mostly auth markup),
-    the source logs the URL to `profiles/lj/linkedin_needs_auth.md` and
+    the source logs the URL to `profiles/example/linkedin_needs_auth.md` and
     moves on — no crash, no retry storm.
 
   - **Gmail-extracted seeds** (default-off): the gmail_lj_jobs source
     captures the alert's canonical search URL into
-    `profiles/lj/linkedin_seeds.md` after each run, so the next run can
+    `profiles/example/linkedin_seeds.md` after each run, so the next run can
     pick them up. This is opt-in via env var.
 
 The output is WikiEntry rows for each harvested related job, registered
@@ -249,6 +249,14 @@ def _parse_jobposting(html: str, url: str) -> tuple[str, str]:
 # ── Source ────────────────────────────────────────────────────────────────
 
 class LinkedInRelatedSource:
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = False
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
     """Follows LJ-maintained LinkedIn seeds and harvests related jobs."""
 
     name = "linkedin_related"
@@ -363,7 +371,11 @@ class LinkedInRelatedSource:
                     careers_url=job_url, source=self.name,
                 )
             except Exception as e:
-                logger.debug(f"[{self.name}] Registry upsert failed: {e}")
+                # A swallowed upsert is data loss, and the exception type is
+                # what separates contract drift from a transient failure
+                # (LEARNINGS 2026-09-20).
+                logger.warning(f"[{self.name}] Registry upsert failed "
+                               f"({type(e).__name__}): {e}")
 
         match = self.matcher.match(
             title, description, company,

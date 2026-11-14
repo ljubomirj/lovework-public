@@ -25,12 +25,16 @@ from pathlib import Path
 from typing import Optional
 
 import config
+from writer_boundary import WriterBusy, standalone_writer_guard
 from job_registry import JobRegistry
 from matcher import (
     JobMatcher,
     MatchResult,
+    _apply_profile_preference_exclusion,
     _apply_reapply_kill,
     _apply_work_auth_kill,
+    _check_ideology_exclusion,
+    _check_profile_preference_exclusion,
     _check_reapply_kill,
     _check_work_auth_kill,
 )
@@ -93,8 +97,8 @@ def _parse_org_page(path: Path) -> list[dict]:
     return out
 
 
-def _rescore_entry(entry: dict) -> Optional[dict]:
-    """Re-run the pre-LLM kills (reapply, work-auth) on an entry. Returns
+def _rescore_entry(entry: dict, profile: str = "") -> Optional[dict]:
+    """Re-run the pre-LLM kills (reapply, work-auth, exclusions) on an entry. Returns
     the entry with updated decision / reasoning if the kill fires, or
     None if the entry should be skipped (e.g. it's a cross-check block).
 
@@ -110,8 +114,31 @@ def _rescore_entry(entry: dict) -> Optional[dict]:
     location = entry.get("location", "")
     description = entry.get("reasoning", "") + " " + entry.get("title", "")
 
-    reapply_kill = _check_reapply_kill(org, title)
+    try:
+        dataset_dir = config.resolve_principal_runtime(profile).dataset_dir
+    except Exception:
+        dataset_dir = None
+    reapply_kill = _check_reapply_kill(org, title, dataset_dir=dataset_dir)
     work_auth_kill = _check_work_auth_kill(location, description)
+    # Principal-declared exclusions (profession, employer ideology) are pre-LLM
+    # too, so a historical run re-scores identically to a fresh one.
+    preference_kill = _check_profile_preference_exclusion(profile, title, description)
+    ideology_kill = preference_kill or _check_ideology_exclusion(profile, org)
+
+    if ideology_kill:
+        mr = MatchResult(
+            score=entry.get("score", 0.0),
+            decision=entry.get("decision", ""),
+            reasoning=entry.get("reasoning", ""),
+        )
+        mr = _apply_profile_preference_exclusion(mr, ideology_kill)
+        return {
+            **entry,
+            "decision": mr.decision,
+            "score": mr.score,
+            "reasoning": mr.reasoning,
+            "_was_killed_by": ideology_kill,
+        }
 
     if reapply_kill or work_auth_kill:
         # Build a MatchResult so we can apply the kill formatters.
@@ -133,22 +160,53 @@ def _rescore_entry(entry: dict) -> Optional[dict]:
 
 
 def main():
+    """Direct invocation: hold the writer lease, then re-score historical entries."""
+    args = _parse_args()
+    principal = args.profile
+    state_root = config.STATE_DIR / principal
+    try:
+        with standalone_writer_guard(principal, mode="direct", state_root=state_root,
+                                     shared=()):
+            return _rescore_body(args)
+    except WriterBusy as busy:
+        print(f"[LOCK] writer busy: {busy.resource.key} — another operation holds "
+              f"this principal's lease (attempt recorded at {busy.attempt_path})")
+        raise SystemExit(75)
+
+
+def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--profile", default="lj", choices=["lj"],
+                        help="Principal (historical rescoring currently supports LJ only)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
     parser.add_argument("--org", help="Rescore just one org (substring match)")
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def _rescore_body(args=None):
+    args = args or _parse_args()
 
     orgs_dir = config.WIKI_ORGS
     files = sorted(orgs_dir.glob("*.md"))
-    if args.org:
-        files = [f for f in files if args.org.lower() in f.stem.lower()]
+    # `--org` selects what gets RE-SCORED. It must never select what goes into
+    # the rebuilt index: filtering the file list here used to rebuild index.md
+    # from that one org alone, silently dropping every other org's findings.
+    targets = (
+        {f for f in files if args.org.lower() in f.stem.lower()}
+        if args.org else set(files)
+    )
 
     all_entries: list[dict] = []
     changes: list[tuple[Path, dict, dict]] = []
     skipped = 0
+    # The declared exclusions live in the profile, whose default principal is
+    # LJ (this tool predates multi-principal rescoring).
+    profile_text = config.load_profile_text("lj", role="general")
     for f in files:
         for entry in _parse_org_page(f):
-            rescore = _rescore_entry(entry)
+            # Untargeted pages keep their stored decision — re-checking them
+            # costs a Gmail history scan per entry for no requested change.
+            rescore = _rescore_entry(entry, profile_text) if f in targets else entry
             if rescore is None:
                 skipped += 1
                 continue
@@ -166,7 +224,10 @@ def main():
             if rescore.get("_was_killed_by"):
                 changes.append((f, entry, rescore))
 
-    print(f"Parsed {sum(1 for _ in all_entries)} entries from {len(files)} org pages ({skipped} skipped as cross-checks)")
+    print(
+        f"Parsed {len(all_entries)} entries from {len(files)} org pages "
+        f"({skipped} skipped as cross-checks); re-scored {len(targets)} page(s)"
+    )
     if changes:
         print(f"\n{len(changes)} entries would be auto-DROPPED by current rules:")
         for f, before, after in changes[:30]:
@@ -183,8 +244,11 @@ def main():
         print("\n(dry run — no wiki changes written)")
         return
 
-    if not changes:
+    if not args.org and not changes:
         print("\nNothing to update.")
+        return
+    if not changes:
+        print("\nNo entries changed; index left untouched.")
         return
 
     # Rebuild the index with the corrected decisions.

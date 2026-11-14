@@ -124,3 +124,107 @@ evidence -> explicit beliefs -> low-cost action -> observed outcome
 Until that data exists, the model's real value is intellectual hygiene: it
 prevents a persuasive match narrative from concealing the uncertain moving
 parts that decide whether an opportunity is worth living.
+
+## Rejection evidence as a decaying prior (proposal, 2026-10-17)
+
+> Status: WRITTEN, NOT IMPLEMENTED. Distilled from LJ, 2026-10-17, the day after
+> the PostHog screen-reject. The shipped approximation is the reapply hard-kill
+> (`matcher._check_reapply_kill`): same-role 12 months, org-level 9 months
+> (`LOVEWORK_REAPPLY_ORG_COOLDOWN_MONTHS`), now reading the outcomes ledger as
+> well as the applications scan. This section is what the principled version
+> looks like, for the day the constants start to feel arbitrary.
+
+The cooldowns are cliffs: P(apply | org) = 0 inside the window, unconditioned
+outside. The principled object is a per-org suppression state driven by
+evidence, not by a constant:
+
+- Each org carries s(t) ∈ [0, 1] — the posterior probability that applying
+  again now is wrong (would repeat the known outcome).
+- A rejection event sets s = 1 at the event date (well: a screen-reject sets
+  it lower than an interview-stage reject would — evidence weight should
+  carry the stage it came from; a screen-reject is weak evidence about the
+  principal and strong evidence about the funnel's filters).
+- Between events, s decays exponentially: s(t) = 2^−(t − t_event)/T½. Teams
+  churn, funnels change, the principal's profile moves. A half-life T½ of
+  6–9 months matches LJ's stated 9–12-month no-reapply instinct once you
+  also multiply in P(advert is genuinely new).
+- Application decisions then stop being gated and start being weighted:
+  apply when E[value] = P(hire) · U − C clears a threshold, with the org's
+  P(hire) multiplied by (1 − s). An exceptional GO can eventually outweigh
+  an old reject; a mediocre MAYBE never does. That is the behaviour the
+  cliff approximates crudely: at 18 months, s ≈ 0.15–0.25 for T½ = 6–9.
+
+What this buys over the constants: the two knobs (evidence weight by stage,
+half-life) are measurable from the outcome ledger once enough rows
+accumulate — the same measurement-first doctrine as the rest of this
+chapter — instead of one integer chosen by feel. What it costs: a state
+parameter per tracked org, and the discipline not to tune T½ per org after
+the fact (it must stay one number, or it becomes narrative again).
+
+### Evidence against is a ledger, not an event (LJ's framing, 2026-10-17)
+
+"Half-life as probability of not-applying, evidence against, weighted
+against our probability of applying" says more than the single-event
+version above. An org's history with the principal is a *sequence* of
+events, each carrying signed evidence about whether applying again is
+futile. The clean algebra is log-odds with per-event decay:
+
+    λ(t) = Σ_k  w_k · 2^(−(t − t_k)/T½)        s(t) = 1 / (1 + e^(−λ))
+
+where w_k is the signed weight of outcome k at time t_k. Per-event decay
+(not decaying one accumulated state) falls out of the arithmetic: two
+year-old rejections weigh less than one fresh one; an interview-last-time
+subtracts from futility rather than adding to it. Starting weights, to be
+replaced by fits when the ledger has rows:
+
+| prior outcome at org | w_k (evidence that applying again is futile) |
+|---|---|
+| screen-reject (applied, template reject) | +1.5 |
+| interviewed, then rejected | +2.5 |
+| applied, outcome unknown (the Poetiq class) | +0.5, wide variance |
+| interviewed, no recorded outcome | +0.5 |
+| offer (declined or lapsed) | −2.0 — you are their kind of candidate |
+| withdrawal (we pulled out) | 0 |
+
+Note the asymmetry the table encodes: a screen-reject is weak evidence
+about the principal and strong evidence about that funnel's filters, so it
+decays toward irrelevance fastest in expectation — filters and recruiters
+churn quicker than a profile does.
+
+### Which probability does the weight multiply?
+
+Two readings of "weight against our probability of applying", and they are
+not the same model:
+
+1. **Multiply P(hire) inside E[V]** — the optimiser's reading, and the one
+   LoveWork should implement: each advert is one decision, apply iff
+   P(hire)·(1−s)·U > C. No randomness, fully auditable.
+2. **Multiply the apply-propensity P(apply)** — the sampler's reading: the
+   system *sometimes* applies, with probability damped by s. This is what
+   generates exploration, and reading 1 has no exploration at all: an org
+   scored a hair under the bar is never sampled again even after s has
+   decayed enough that its true EV is positive. If lockout ever shows up
+   in the ledger, the fix is a small explore term (ε-floor on (1−s), or a
+   periodic s-reset on the org's oldest evidence), not a switch to
+   stochastic applying.
+
+### One decay family, two clocks
+
+This is not the model's first decay constant. Chapter 45's EXPIRED pile
+already runs one in production: a case's value halves every 15 days and
+retires at ⅛ after 45 days — *their* silence about *one case*, clocked in
+days. This section's T½ is *their* rejection of *us at the org*, clocked
+in months. Same functional form, different question, different clock; the
+staleness doctrine's 10-day cap is the hard-knife cousin on the advert
+itself. The simulator gains no new mathematics here — one more constant
+and a ledger.
+
+### Calibration path
+
+`outcomes.jsonl` already carries everything the fit needs — `kind`
+(applied / interview / offer / rejection) and `date` per org. The
+measurable is P(eventual success at org | last outcome kind, Δt since it);
+fit w_k and T½ from it when rows accumulate, and until then keep the
+constants above under the one-number discipline. The reapply hard-kill's
+6/18-month cliffs remain the shipped behaviour; this section is the shape
+they approximate.

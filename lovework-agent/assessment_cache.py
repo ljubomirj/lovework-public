@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import config
+from calibration import apply_tier_bands, calibrate_result, calibration_version
 from matcher import MatchResult
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,18 @@ class AssessmentCachingMatcher:
         self.cache_dir = cache_dir or config.CACHE_DIR / "assessments"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
+    def _model(self) -> str:
+        """The model behind this chain: wrappers nest, the LLM client sits last."""
+        node = self.matcher
+        for _ in range(6):
+            model = getattr(node, "model", None)
+            if isinstance(model, str) and model:
+                return model
+            node = getattr(node, "matcher", None) or getattr(node, "llm", None)
+            if node is None:
+                break
+        return ""
+
     def _key(
         self,
         job_title: str,
@@ -58,6 +71,7 @@ class AssessmentCachingMatcher:
         canonical = json.dumps(
             {
                 "namespace": self.namespace,
+                "calibration": calibration_version(),
                 "title": job_title,
                 "description": job_description,
                 "org": org_name,
@@ -81,9 +95,18 @@ class AssessmentCachingMatcher:
         path = self.cache_dir / f"{key}.json"
         if path.exists():
             try:
-                return MatchResult.model_validate_json(path.read_text(encoding="utf-8"))
+                cached = MatchResult.model_validate_json(path.read_text(encoding="utf-8"))
             except Exception as exc:
                 logger.warning("Ignoring invalid assessment cache %s: %s", path, exc)
+            else:
+                # The cache holds the *model's* verdict; the policy (calibration
+                # offset, tier bands) is applied on every read. Without this a
+                # policy change was invisible while the cache was warm: KJ's
+                # 2026-09-23 re-run reused 24-hour-old verdicts and produced the
+                # pre-banding report in three minutes.
+                calibrate_result(cached, self._model())
+                apply_tier_bands(cached)
+                return cached
 
         result = self.matcher.match(
             job_title,

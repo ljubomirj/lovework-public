@@ -214,7 +214,8 @@ def search_jobs_tool_factory(registry: JobRegistry) -> AgentTool:
         parameters={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "enum": ["new", "still_open", "disappeared", "long_lasting"]},
+                "status": {"type": "string", "enum": ["new", "still_open", "disappeared", "long_lasting",
+                     "not_listed_in_scope"]},
                 "org": {"type": "string"},
                 "limit": {"type": "integer", "default": 50},
             },
@@ -293,10 +294,11 @@ def fetch_url_tool_factory() -> AgentTool:
             return _result("Error: url is required.")
 
         try:
-            md = fetch_page(url, use_cache=use_cache)
+            md, provider = fetch_page(url, use_cache=use_cache)
             return _result_json({
                 "url": url,
                 "chars": len(md),
+                "provider": provider,
                 "content": md[:50000],  # truncate
             })
         except Exception as e:

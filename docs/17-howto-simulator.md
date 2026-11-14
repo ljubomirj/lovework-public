@@ -2,7 +2,13 @@
 
 > **Audience:** builders and agents who want to turn LoveWork's crawl history
 > into a working simulation of work-life decisions.
-> **Status:** roadmap, not implemented.  See also
+> **Status:** decision-simulator roadmap; interfaces below are proposed, not
+> executable instructions. The existing `calibration.py` aligns model score
+> scales; it does not calibrate career outcomes. The existing `rehearse.py`
+> runs ATA mock interviews, not this chapter's decision rehearsal.
+> **Implementation order:** [chapter 34](34-agent-system-plan.md), especially
+> AS0 (evidence), AS4 (validated learning) and AS5 (evaluation), under the
+> operating doctrine in [chapter 27](27-agent-ergonomics.md). See also
 > [`09-intelligence-layer.md`](09-intelligence-layer.md) (thesis),
 > [`11-agentic-intelligence-harness.md`](11-agentic-intelligence-harness.md)
 > (harness design), [`13-probabilistic-simulator-model.md`](13-probabilistic-simulator-model.md)
@@ -11,16 +17,18 @@
 ## Why a HOWTO exists separately from the design docs
 
 Chapters 09, 11, and 13 already lay out *what* LoveWork should build and *why*.
-This chapter says *how* — the concrete, phased, implementable path from the
-existing dataset to a working simulator.  It is meant to be executed, not
-merely read.
+This chapter describes the destination and its evidence gates. Read
+[chapter 19](19-howto-dataset-second-opinion.md) before implementation:
+measure usable joins, label meaning and selection bias before building a
+predictor. The phases below are capability dependencies, not an instruction
+to build every sketched class or command.
 
 The core insight shared with the ARC-AGI-3 Schema harness:
 
 ```text
 editable world model (person + company + process)
-    -> plan inside the model (free)
-    -> execute cheapest informative real-world action
+    -> compare bounded alternatives (inference and attention have costs)
+    -> execute cheapest authorized action that can improve a decision
     -> observe outcome
     -> update model
 ```
@@ -35,7 +43,11 @@ ecosystem.
 
 Before building anything, know what you have.
 
-### The decision ledger (live, growing)
+### The decision ledger (historical inventory)
+
+The counts below are the original July 2026 inventory, not current status.
+Use the principal's generated cockpit and linked ledger receipts for current
+counts. A file's existence does not establish usable labels or calibration.
 
 | Stream | LJ rows | VJ rows | Content |
 |--------|---------|---------|---------|
@@ -76,8 +88,9 @@ work_auth + roles/ for LJ, VJ, KJ, PK.
   decision latitude, and stage — separate from the advert text.
 - **Process simulator**: a model of how the harness itself interacts with the
   world (sources, timing, uncertainty, information value).
-- **Calibration**: the ledger has 0 outcome-calibrated priors.  Every score is
-  still an LLM guess.
+- **Outcome calibration**: no outcome-calibrated predictor is established by
+  this design. `calibration.py` implements model scale alignment; preserving
+  score comparability is a different claim from predicting observed outcomes.
 - **Reflection loop**: no periodic review of decisions vs outcomes.
 - **Regression harness**: no test suite of past judgment cases.
 
@@ -87,27 +100,31 @@ work_auth + roles/ for LJ, VJ, KJ, PK.
 
 ### 1a. Backfill outcome links to assessments
 
-Currently outcomes are *org-level* (history.py proves prior contact with an
-org, not always which advert).  Add a `match_assessment_to_outcome` script:
+Outcomes may be *org-level*: prior contact does not always identify the
+advert or assessment that caused it. First measure the existing joins under
+chapter 19. Then represent qualified associations as append-only link events:
 
 ```python
-# For each outcome entry, try to find the assessment that predicted it:
-#   - exact advert_hash match
-#   - org_name + title fuzzy match
-#   - org_name + date window match
-# Store matched outcome_id + observed_decision in the assessment row.
+# Retain assessment_id, outcome_id, principal, identity scope, evidence refs,
+# link method, recorded_at, and any superseded link id in a separate event.
+# Exact role identity still needs temporal validation; fuzzy/org matching
+# creates a candidate association, never an automatic role-level label.
+# Rebuild joined views from events; never rewrite an assessment row.
 ```
 
-This gives the first calibration pairs: *we scored this X, and the real outcome
-was Y*.  Without this, the ledger is a diary, not training data.
+These links establish what can be compared, not whether a comparison is
+statistically or semantically valid. Later outcomes remain evaluation targets,
+outside the evidence available to the historical decision. Retain ambiguous,
+unmatched and conflicting links rather than forcing coverage upward.
 
 **Checkpoint:** a CLI that shows, for any assessment, whether we know what
 happened next.
 
-### 1b. Structured assessment schema
+### 1b. Structured assessment schema and reaction capture
 
-The current assessment JSONL is free-form at the edges.  Add a Pydantic model
-for the canonical assessment row with validation on write:
+After measurement identifies actual gaps, validate future assessment writes
+without rewriting legacy evidence. This illustrative shape separates immutable
+assessment inputs/output from later links:
 
 ```python
 class AssessmentRow(BaseModel):
@@ -131,19 +148,23 @@ class AssessmentRow(BaseModel):
     reasoning: str
     policy_version: str
     lifecycle_status: str
-    # New fields for simulator feed:
-    matched_outcome_id: str | None = None
-    matched_outcome_kind: str | None = None  # applied | rejection | interview | offer | ignored
-    matched_outcome_date: date | None = None
+    # Proposed references to exact inputs; outcomes live in separate events.
+    input_refs: list[str]
+    knowledge_cutoff: datetime
 ```
 
-Run a validation pass over existing rows.  Reject/fix rows that don't conform.
+Validate old rows into a report; preserve their original bytes and qualify
+missing fields. Any repaired interpretation is a linked revision. Build the
+principal-scoped reactions capture from chapter 18 alongside this work: outcome
+links alone cannot supply taste, fit or flourishing labels.
 
 ### 1c. Advert corpus as a first-class dataset
 
 Each assessment references an advert via `advert_hash`.  But the advert text
 itself — the primary content the LLM scored against — is not in the dataset.
-Add an `adverts.jsonl` or `adverts/` directory keyed by `advert_hash`:
+Use captured source versions and consumed-input references in strata (chapter
+26), not a competing mutable corpus keyed only by an identity hash. A proposed
+evidence view may expose:
 
 ```json
 {
@@ -165,17 +186,26 @@ This enables:
 - Comparing reasoning quality across adverts
 - Training/fine-tuning on the actual content, not just the hash
 
-**Script:** `backfill_adverts.py` — reads every assessment, re-fetches the URL
-(if still live), or copies from cached `lovework-agent/cache/page_*.md` files
-when available.
+> **D20 evidence contract:** the frozen per-stratum corpus
+> ([chapter 26](26-asof-strata-history.md)) supplies retained advert versions.
+> Verify capture coverage for each case; seal existence is insufficient.
+> It requires captured input references, not merely a
+> run-end cache copy. Retained reports and raw-email archives can also support
+> explicitly qualified reconstruction. Refetch-backfill is unsound:
+> re-fetching later returns the present, not the page the matcher scored
+> (a disappeared advert returns a 404, a changed one returns text we never
+> saw). Pre-strata reconstruction uses surviving caches, CSV archives,
+> reports, raw emails and recorded Git versions with explicit provenance
+> grades; file dates alone do not establish historical acquisition.
 
 ### 1d. Profile snapshots per run
 
-Each run already records `profile_hash`.  Store the actual profile text at
-that point in time under `state/<principal>/dataset/profiles/<run_id>/`:
+Use the actual assembled profile and effective policy inputs pinned for the
+operation, with their digests and references. Do not introduce a second
+profile archive alongside strata:
 
 ```text
-lovework-agent/dataset/profiles/<run_id>/
+state/<principal>/strata/<run_id>/inputs/
   soul.md
   cv-short.md
   bio-long.md
@@ -184,8 +214,15 @@ lovework-agent/dataset/profiles/<run_id>/
 ```
 
 This is critical: the profile that generated the scores is versioned alongside
-the scores.  Without it, you can't tell whether a score improvement came from a
+the scores. Without it, you can't tell whether a score improvement came from a
 better matcher or a better profile.
+
+> **D20 input contract:** verify the case's actual coverage rather than
+> inferring it from directory names. Pin effective inputs at run start,
+> execute against those bytes, and seal them under `strata/<run_id>/inputs/`.
+> Copying the profile only at run end can capture a different version.
+> [Chapter 26 §3](26-asof-strata-history.md#3-l0-hard-linked-strata-with-a-consistency-protocol)
+> defines the full input contract, including policy, clock and history.
 
 ---
 
@@ -258,8 +295,8 @@ class ProcessSimulator:
     scheduler: Schedule
 
     def coverage(self, principal: str, role: str) -> SimCoverage:
-        """What fraction of relevant opportunities does the current
-        source config actually see?"""
+        """Coverage of named sources and sampled opportunity families;
+        unknown total-market recall stays unknown."""
         ...
 
     def information_value(self, action: str) -> float:
@@ -296,35 +333,43 @@ class Rehearsal:
     company_screening: SimScreening
     process_coverage: SimCoverage
 
-    competing_hypotheses: list[tuple[str, str, float]]
-    # e.g. ("role is real", "proven by repeat advert + named manager", 0.8)
-    #      ("role is ghost", "advert 6mo old, no hires in org", 0.2)
+    competing_hypotheses: list[dict]
+    # Claim, evidence refs, counterevidence, qualitative confidence,
+    # and observation that could change the recommended action.
+    # A repeated advert does not prove genuine current hiring.
 
     recommended_experiment: str
-    # The single action that maximises information per unit cost
+    # Cheapest authorized action expected to change a consequential decision
     # Options: read_primary_page, try_product, ask_manager,
     #          seek_introduction, apply, defer, ignore
 
     expected_value: float
     confidence: str  # low | medium | high
+    budget: dict  # calls, tokens, elapsed time, money, human attention
+    stop_reason: str | None
+    wake_condition: str | None
 ```
 
-### 3b. The rehearsal command
+### 3b. Proposed decision-rehearsal interface
+
+The examples below are design sketches, not installed commands. The existing
+`rehearse.py` belongs to ATA interviews; reserve a distinct decision interface
+through the common facade before implementing this one.
 
 ```bash
 # Rehearse a specific opportunity
-../venv/bin/python3 rehearse.py \
+../venv/bin/python3 decision_rehearsal.py \
     --profile lj --role general \
     --url "https://..." \
     [--advert-hash "..."]
 
 # Rehearse all new GO/MAYBE in the latest report
-../venv/bin/python3 rehearse.py \
+../venv/bin/python3 decision_rehearsal.py \
     --profile lj --role general \
     --from-latest-report
 
 # Rehearse every opportunity in the last assessment set (batch mode)
-../venv/bin/python3 rehearse.py \
+../venv/bin/python3 decision_rehearsal.py \
     --profile lj --role general \
     --from-dataset --since 7d
 ```
@@ -341,8 +386,8 @@ The rehearsal output is a structured markdown block:
   the role may attract many applicants.
   → Key unknown: how competitive is the current pipeline?
 
-**Screening model:** The principal has no professional SE experience.
-  This is a *medium-risk* gap for a Research Engineer title.
+**Screening model:** Engineering screening criteria need checking against
+  the principal's cited evidence; no career deficit is inferred from a title.
   → Experiment: Does the advert emphasise research output or
      engineering maturity?
 
@@ -368,57 +413,61 @@ record_feedback(
     action_taken="applied",
     outcome="rejected_at_screening",
     human_reflection="They wanted 5y SE experience I don't have",
-    updated_belief="screening_model.reach_score -= 2 for similar roles"
+    proposed_hypothesis="Check whether this requirement limits similar routes",
+    evidence_refs=["rejection-message-id", "principal-reflection-id"]
 )
 ```
+
+This records evidence and a hypothesis, not an automatic score decrement.
+One observed rejection cannot identify its cause or generalize to other roles
+without supporting evidence. Learning follows chapter 18's promotion gate.
 
 ---
 
 ## Phase 4 — Calibrate from outcomes
 
-### 4a. Calibration script
+### 4a. Define the target and denominator before the evaluator
 
-```bash
-../venv/bin/python3 calibrate.py --profile lj --min-outcomes 10
-```
+A score is a judgment, not automatically a probability. Do not divide offers
+by every scored lead and call the result score calibration: most leads were
+never pursued, exposure is selected by the current policy, and many outcomes
+are still unobserved. A proposed evaluator must report separate targets:
 
-Output: a table showing, for each score band (0-2, 2-4, 4-6, 6-8, 8-10),
-what fraction of roles in that band resulted in a positive outcome.
-
-```text
-Score band  | Count | Applied | Interview | Offer | Offer rate
-0-2         |  1200 |      12 |         0 |     0 |       0.0%
-2-4         |   600 |      18 |         1 |     0 |       0.0%
-4-6         |   300 |      25 |         3 |     1 |       0.3%
-6-8         |   150 |      30 |         8 |     2 |       1.3%
-8-10        |    50 |      20 |        10 |     5 |      10.0%
-```
-
-This is the first reality check on the matcher's priors.  It will likely show
-that scores are overconfident relative to outcomes — which is expected, and
-exactly what calibration fixes.
-
-### 4b. Calibrated score vs raw score
-
-The simulator should present *both* the raw matcher score and a
-calibrated-by-outcomes posterior.  Over time, the posterior becomes the primary
-score and the raw score becomes a diagnostic.
-
-### 4c. Drill-down by failure mode
-
-For rejected applications, classify the failure mode:
-
-| Failure mode | What it means | How to detect |
+| Target | Eligible evidence and denominator | Explicit exclusions / limits |
 |---|---|---|
-| credential gap | Missing degree/cert/experience the advert requires | Parse rejection + compare to advert requirements |
-| competition | Good fit but someone better applied | Signal: late-stage rejection after multiple rounds |
-| fit mismatch | The role wasn't what it seemed | Signal: early rejection + "not a good fit" language |
-| visa | Work authorisation issue | Explicit rejection language |
-| ghost | Role was never real | No response ever, advert disappears |
-| timing | Role filled before application processed | Fast rejection, role still posted |
+| Recommendation usefulness / taste | Principal reactions to identified, actually reviewed assessments | Silence and applications are not taste labels; report exposure and response coverage |
+| Interview reach | Valid role-level applications with known follow-up window, grouped by route and principal | Pending/no-response cases remain censored; org-only links do not become role labels |
+| Offer conversion | Qualified interviews with observed process outcomes and follow-up | Generic rejections do not identify causal failure modes |
+| Flourishing / regret | Principal reflections after the relevant lived experience and time horizon | Interview or offer success does not establish flourishing |
+| Operational quality | Attempted operations / checked artifacts with their success predicates | A healthy run does not prove valuable recommendations |
 
-Track these in `outcomes.jsonl` with a `failure_mode` field.  Over time, the
-company simulator learns which orgs/roles tend toward which failure modes.
+Pin inputs, target definition, clock, policy, model, identity joins and label
+provenance. Report sample size, missingness, coverage, uncertainty and known
+selection bias. With insufficient evidence, return `not estimable` with the
+capture step that would help; do not invent a numeric prior from a minimum
+row-count threshold. Observational comparisons support descriptive claims,
+not causal claims that a recommendation improved a life.
+
+### 4b. Keep scales, predictions and decisions distinct
+
+The existing `calibration.py` aligns one model's score scale with a reference
+model. It does not validate the reference model against lived outcomes.
+Preserve raw scores, scale transformation/version, qualified outcome estimates,
+and the resulting action as separate fields. A reach estimate never replaces
+fit or flourish; a change of provider is itself an evaluation condition.
+
+### 4c. Failure attribution is a hypothesis unless established
+
+| Observation | Permitted interpretation |
+|---|---|
+| Employer explicitly names a missing credential or work authorization | Attributed employer explanation, with the source and scope |
+| Rejection after multiple rounds | Observed process stage; competition remains a possible explanation |
+| Generic “not a good fit” | Rejection with unknown reason, not proof of principal-role mismatch |
+| No response by a named date | Follow-up incomplete / censored, not proof of a ghost role |
+| Advert disappears | Listing no longer observed under stated coverage; not proof it was filled |
+
+Store the raw receipt separately from inferred causes, preserve competing
+explanations, and only update the dimension the evidence actually addresses.
 
 ---
 
@@ -456,8 +505,9 @@ regression case:
 }
 ```
 
-These are the LoveWork equivalent of ARC-AGI-3 holdout puzzles — specific
-judgment failures that the simulator must not repeat.
+These are regression cases once a scoped expected behavior is validated.
+A case used to design a patch is not an untouched holdout; keep development,
+regression and time/opportunity-family-separated evaluation partitions distinct.
 
 ### 5c. Improvement metric
 
@@ -465,15 +515,18 @@ Tracking improvement is not about raising scores.  It's about:
 
 ```text
 1. Does the simulator catch known bad recommendations before the human does?
-2. Does it rank opportunities so that the top 5% contain more realised good
-   outcomes than the bottom 95%?
+2. Does it rank reviewed opportunities usefully, while measuring exposure,
+   missing labels and a small authorized sample of overlooked branches?
 3. Does its uncertainty estimate correlate with actual prediction error?
-4. Does the recommended experiment actually reduce uncertainty when executed?
+4. Does the next action improve the decision enough to justify its total cost?
 ```
 
-Define these four metrics.  Measure them after every calibration pass.  A
-simulator that improves on these metrics is genuinely learning, not just
-becoming a more articulate guesser.
+Define these metrics before a candidate change and compare with a frozen
+baseline. Preserve hard constraints, positive anchors and branch diversity;
+report both improvements and regressions. Repeatedly tuning on the same cases
+cannot establish generalization. Stop when the budget is spent, no new
+independent evidence exists, or no plausible result would change the decision.
+A bounded negative result plus its retry condition is a useful retained result.
 
 ---
 
@@ -485,12 +538,14 @@ Once the simulator works for one principal (LJ), generalise:
    `profiles/<name>/` without code changes.
 2. **Principal-specific calibration**: each principal gets their own
    calibration table and regression suite.
-3. **Cross-principal patterns**: if VJ's rejection patterns resemble LJ's at
-   the same career stage, the simulation can transfer.
+3. **Share procedures, not personal conclusions**: principal evidence,
+   preferences, calibrations and hypotheses stay scoped to that person.
+   A transferable procedure may be evaluated with authorized, non-identifying
+   fixtures; resemblance alone never authorizes reuse of another person's data.
 
-The VJ dataset is already growing (7 runs, 1119 assessments).  It has zero
-outcomes so far — which means the simulator's priors for VJ are entirely
-inherited from profile and domain knowledge, not yet calibrated.  That's
+The original July inventory showed VJ with 7 runs, 1119 assessments and no
+outcomes. Re-measure present coverage per principal; do not inherit LJ's
+calibration or treat those historical counts as current.  That's
 honest and useful: it sets a baseline to measure calibration improvement
 against.
 
@@ -509,30 +564,24 @@ against.
 
 ---
 
-## Immediate next steps (what to do now)
+## Implementation entry gate
 
-1. **Run `rg assessment.*outcome` across the dataset** to see how many
-   assessments already have matched outcomes.  If fewer than 10% of assessed
-   roles have outcome data, the first priority is improving outcome capture
-   (see Phase 1a).
+Use [chapter 34](34-agent-system-plan.md) as the cross-system plan of record;
+this chapter supplies simulator-specific contracts, not a competing backlog.
 
-2. **Write the `match_assessment_to_outcome` script.**  This is the single
-   highest-leverage piece of work: it turns the ledger from a diary into
-   training data.  Target: one afternoon.
+1. Identify a real decision the principal needs and measure the cheapest
+   available evidence path. Establish a bounded baseline before adding a model.
+2. Audit joins, consumed-input coverage, knowledge cutoffs and labels using
+   chapter 19's qualifications. Record unanswerable questions explicitly.
+3. Capture attributable reactions and outcome links append-only, with the
+   principal boundary enforced by the shared domain operation, not the UI.
+4. Run a small decision-rehearsal experiment only when the evidence can
+   distinguish it from the baseline. Prefer existing matcher functions over
+   new simulator classes; record calls, elapsed time, money and review burden.
+5. Promote only a tested, scoped proposal under chapter 18's gate. Preserve
+   negative trials, baseline and holdout versions, stopping reasons and the
+   conditions that would justify another attempt.
 
-3. **Write the Pydantic `AssessmentRow` schema.**  Add it to `snapshot.py`.
-   Run a validation pass.  Target: one morning.
-
-4. **Write `backfill_adverts.py`.**  Pull primary content from `cache/page_*.md`
-   and registry to create the advert corpus.  Target: one afternoon.
-
-5. **Write `calibrate.py` (v0).**  Simple script: read assessments + outcomes,
-   bin by score, compute outcome rates.  Target: one morning.
-
-6. **Write `rehearse.py` (v0).**  Wrap the existing matcher with uncertainty
-   labels and a recommended-experiment field.  Do not build a new scoring
-   engine — use the existing one but make its assumptions explicit.
-   Target: one day.
-
-Each step produces a working CLI from day one.  No step requires the previous
-step to be perfect.  The simulator grows by accretion, not by a Big Build.
+Acceptance is a better, auditable decision at an acceptable total cost, or an
+honest finding that more evidence is required. Generating a class hierarchy,
+a calibration table or a longer explanation is not acceptance.

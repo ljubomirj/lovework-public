@@ -1,22 +1,24 @@
-# Work Authorization — (principal name)
+# Work Authorization — Alex
 
-> Where this principal may live and work, and which roles are auto-DROP because of
-> visa/work-permit constraints. The matcher reads this for context, and the
-> work-auth hard-kill (matcher.WORK_AUTH_KILL_PATTERNS) auto-DROPs roles like
-> "US citizen only" / "no visa sponsorship" regardless of fit.
+> Where the principal may work. This file feeds the pre-LLM hard-kill: the
+> **machine-readable** form of a rule is an HTML-comment marker
+> (see `docs/03-profiles.md` § "Work location"); prose alone is read by the model
+> as a preference and will not reliably drop an ineligible advert. A template
+> should not carry a live marker — add one when you copy this file for a real
+> principal.
 
-## Where I may live
-- (e.g. UK, MK)
+## Status
 
-## Where I may work
-- (e.g. UK, MK, remote company-to-company via an EOR, US company only if it has a UK entity)
+- **UK citizen.** Unrestricted right to work in the UK.
+- No visa sponsorship needed for a UK role.
+- Not seeking roles that require relocation outside the UK.
 
-## Hard deal-breakers (auto-DROP)
-- US citizen / US person only
-- "must be authorized to work in the US" without sponsorship
-- "no visa sponsorship" / "cannot sponsor"
-- W-2 only, US-based, no UK/EU hiring path
+## Where I May Live
 
-## Right to work summary
-- Citizenship/residency: ...
-- Sponsorship-requiring roles: out of scope unless a local hiring path exists.
+Manchester or London, or remote within the UK. Hybrid is fine when the office is
+one of those two cities.
+
+## Country Rules
+
+No exclude-list: an employer elsewhere is not the question — the *location of the
+work* is, and that is already answered above.

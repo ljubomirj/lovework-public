@@ -1,0 +1,216 @@
+- name: Anthropic
+  careers_url: https://advert.example.invalid/
+  cadence_days: 14
+  reason: applied
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Fathom Research
+  careers_url: https://advert.example.invalid/
+  cadence_days: 14
+  reason: applied
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Ridge Analytics Group
+  careers_url: https://advert.example.invalid/ Group.Lumen Labs Labs/careers
+  cadence_days: 14
+  reason: applied
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Hugging Face
+  careers_url: https://huggingface.co/jobs
+  cadence_days: 14
+  reason: applied
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Kestrel Dynamics
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: yc_ml_ai
+  last_checked: '2026-10-10'
+  last_found: 0
+- name: Perplexity
+  careers_url: https://www.perplexity.ai/careers
+  cadence_days: 30
+  reason: yc_ml_ai
+  last_checked: '2026-10-10'
+  last_found: 0
+- name: Vertex Networks UK
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Nimbus Partners
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Cantina Labs
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 11
+- name: Pine Dynamics Sciences
+  careers_url: https://advert.example.invalid/ Sciences.com
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Kestrel Labs Studio
+  careers_url: https://advert.example.invalid/ Studio-Senior-Data-Scientist
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Renaissance Philanthropy
+  careers_url: https://www.renaissancephilanthropy.org/
+  cadence_days: 14
+  reason: philanthropy_track
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Open Home Foundation
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: philanthropy_track
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Forecasting Research Institute
+  careers_url: https://forecastingresearch.org/
+  cadence_days: 30
+  reason: philanthropy_track
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Cato Institute
+  careers_url: https://www.cato.org/careers
+  cadence_days: 30
+  reason: think_tank_innovation_fellowship
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Ridge Technologies
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 3
+- name: Isomorphic Labs
+  careers_url: https://job-boards.greenhouse.io/isomorphiclabs
+  cadence_days: 21
+  reason: cube-promotion tier A (15 GO + 63 MAYBE across 19 dates, best 8.6, last
+    seen 5d ago)
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Granite Analytics
+  careers_url: https://advert.example.invalid/
+  cadence_days: 21
+  reason: cube-promotion tier A (10 GO + 14 MAYBE across 10 dates, best 8.7, last
+    seen 5d ago)
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Inception
+  careers_url: https://jobs.gem.com/inception
+  cadence_days: 21
+  reason: cube-promotion tier A (4 GO + 29 MAYBE across 19 dates, best 7.8, last seen
+    5d ago)
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Umber Systems
+  careers_url: https://advert.example.invalid/
+  cadence_days: 21
+  reason: cube-promotion tier A (8 GO + 15 MAYBE across 18 dates, best 7.9, last seen
+    10d ago)
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Xenon Research Sciences
+  careers_url: https://advert.example.invalid/ Sciences.ai/careers
+  cadence_days: 21
+  reason: cube-promotion tier A (8 GO + 10 MAYBE across 13 dates, best 7.6, last seen
+    5d ago)
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Kestrel Research
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-10'
+  last_found: 0
+- name: Enigma
+  careers_url: https://www.enigma-rec.ai
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-10'
+  last_found: 0
+- name: Magno IT Recruitment
+  careers_url: https://magno-it.nl
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-10'
+  last_found: 0
+- name: Rising Star
+  careers_url: https://rising.example/careers
+  cadence_days: 30
+  reason: cube-promotion tier B (1 GO + 1 MAYBE across 2 dates, best 8.8, last seen
+    4d ago)
+  last_checked: '2026-10-10'
+  last_found: 0
+- name: Beyond Sports
+  careers_url: https://www.beyondsports.nl
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-17'
+  last_found: 0
+- name: Yarrow Analytics Collective
+  careers_url: https://lumalabs.ai
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-17'
+  last_found: 0
+- name: Kestrel Partners Systems
+  careers_url: https://advert.example.invalid/ Systems.com/careers
+  cadence_days: 14
+  reason: "NN spot check 2026-10-15 \u2014 AI Research Engineer (Rust/CUDA, vision)"
+  last_checked: '2026-11-02'
+  last_found: 1
+- name: Fathom Dynamics Labs
+  careers_url: https://advert.example.invalid/ Labs.ac.uk
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Pine Research AI
+  careers_url: https://advert.example.invalid/ AI.com
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Zephyr Research
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: BAE Systems
+  careers_url: https://jobsearch.baesystems.com
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-10-24'
+  last_found: 0
+- name: Yarrow Partners Club
+  careers_url: https://advert.example.invalid/ Club.com/careers
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: '2026-11-02'
+  last_found: 0
+- name: Women in Tech
+  careers_url: https://jobs.womenintech.co.uk
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: null
+  last_found: 0
+- name: Alder Compute
+  careers_url: https://advert.example.invalid/
+  cadence_days: 30
+  reason: lead-detected
+  last_checked: null
+  last_found: 0

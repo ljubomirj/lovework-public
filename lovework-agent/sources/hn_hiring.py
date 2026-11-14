@@ -51,6 +51,15 @@ MAX_ENTRIES = int(os.getenv("LOVEWORK_HN_HIRING_MAX_ENTRIES", "200"))
 
 
 class HNHiringSource:
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = True
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
+
     """Reads the monthly "Ask HN: Who is hiring?" thread live."""
 
     name = "hn_hiring"
@@ -127,11 +136,17 @@ class HNHiringSource:
                 record = self.registry.upsert(
                     org=org_name, title=title, url=registry_url,
                     careers_url=comment_url, source=self.name,
+                    primary=self.primary,
                     discovery_url=comment_url,
                     discovery_date=job.get("discovery_date", ""),
+                    posted_at=job.get("posted_at", ""),
                 )
             except Exception as e:
-                logger.debug(f"[{self.name}] Registry upsert failed: {e}")
+                # A swallowed upsert is data loss, and the exception
+                # *type* is what separates contract drift from a
+                # transient failure (LEARNINGS 2026-09-20).
+                logger.warning(f"[{self.name}] Registry upsert failed "
+                               f"({type(e).__name__}): {e}")
 
         entry = WikiEntry(
             org_name=org_name,
@@ -144,6 +159,7 @@ class HNHiringSource:
             source=self.name,
             discovery_url=comment_url,
             discovery_date=job.get("discovery_date", ""),
+                    posted_at=job.get("posted_at", ""),
             advert_excerpt=body,
             **match_fields(match),
         )

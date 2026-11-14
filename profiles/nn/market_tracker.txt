@@ -1,0 +1,277 @@
+========================================================================
+
+NN — AI-frontier market tracker (profiles/nn/market_tracker.txt)
+
+The employers that are the players in the frontier-AI market NN's own profile
+points at — post-training and inference providers, GPU/neocloud compute, robot
+foundation-model labs, AI supply-chain and AI-data companies — a working list
+for a weekly crawl, not a set of open adverts.
+Compiled 2026-09-30 by the LoveWork agent.
+
+Sources (all checked 2026-09-30):
+  • Frontier List — "Post-training as a service"
+    (frontierlist.com/post-training-as-a-service), picked by 46 people in AI.
+  • Frontier List — "GPU providers for neolabs"
+    (frontierlist.com/gpus-for-neolabs), picked by 52 people.
+  • Frontier List — "Robotics labs and startups with the highest talent
+    density" (frontierlist.com/robotics-talent-density), picked by 55 people.
+  • Frontier List — "Neolabs with the highest talent density"
+    (frontierlist.com/neolabs), 73 voters, $10B cap applied by the poll
+    itself. Companies added 2026-10-03; careers URLs not yet enriched.
+  • Frontier List — "Most interesting AI supply chain startups"
+    (frontierlist.com/ai-supply-chain-startups) — poll of named insiders,
+    $10b valuation or less.
+  • Frontier List — "Most interesting AI data startups"
+    (frontierlist.com/ai-data-startups) — poll of named insiders.
+  • Frontier List — "Data companies for future founders"
+    (frontierlist.com/data-companies-for-future-founders), picked by 52 people.
+  • Breakout List (breakoutlist.com) — 92 startups picked by 15 investors;
+    only the AI/ML, data, robotics, compute and frontier-tech rows are taken.
+  • Pavlov's List (pavlovslist.com) — RL environments and training-data
+    vendors, maintained by Chris Barber.
+  • Pavlov's List — Robotics data (pavlovslist.com/robotics-data) —
+    egocentric/teleoperation data vendors.
+  • Live URL liveness checks only (anonymous curl, GET, following redirects,
+    15s timeout, 2026-09-30). Every URL answered 2xx except the four marked
+    "(unverified URL)", which are kept rather than dropped.
+
+Format: • Name — URL — one line — [tags] (location if known)
+
+Legend: POST-TRAIN = fine-tuning / RL post-training | INFERENCE = serving,
+optimisation & inference platforms | COMPUTE = GPU/neocloud & datacenter
+capacity | CHIP = custom silicon | ROBOTICS = robot foundation models & robot
+data | DATA = training data, RL environments & evaluations | SUPPLY = AI
+supply chain (power, optics, materials) | NEOLAB = frontier model lab |
+OSS = open-source project/lab
+
+Derived from — these are the AI-frontier company lists NN supplied, and they
+fit NN because they are the post-training, inference, compute and
+agentic-systems employers where an ML/AI researcher-engineer profile is the
+hire: soul.md, "What I'm Looking For": "A role that lets me do real ML/AI
+research or engineering, ideally at the frontier"; and its role type 4,
+"General ML/AI research or engineering — the default. Research scientist,
+research engineer, ML engineer, AI engineer at a frontier lab, research org,
+or strong technical startup." market-position.md puts the strongest lane at
+"applied ML engineering, agentic systems, research engineering ..., evaluation/
+tooling/platform roles, data-centric ML", which is exactly what §A (post-
+training/serving), §B (compute) and §E–§I (data, RL environments and evals)
+hire for. Read with work_auth.md: NN is London-based, open to remote for
+UK/EU-based companies or explicit global-remote policy, and NOT open to
+US-only or US-timezone roles — most rows below are US (SF), so the UK/EU rows
+(Harbor Partners Digital, Fractile, Umber Systems Group, Originator, Pine Networks Club's London office) and any
+remote-first employer are the priority. soul.md's ideology exclusion applies:
+Anthropic is excluded and does not appear here.
+
+========================================================================
+
+◦◦◦ A. Post-training as a service (frontierlist.com/post-training-as-a-service)
+
+• Applied Compute — https://advert.example.invalid/ Post-training and serving of frontier models for enterprises (Yash Patil, Rhythm Garg, Linden Li). 30 votes — the list's clear top pick; 26-50 people. [POST-TRAIN,INFERENCE] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Trajectory — https://advert.example.invalid/ Post-training tooling that continually fine-tunes a model from its production usage; also on the AI-data, data-companies and Breakout lists. 13 votes; 11-25 people. [POST-TRAIN] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Prime Intellect — https://advert.example.invalid/ Open-model post-training plus decentralised compute; voted on four of these lists (post-training, GPU, AI-data, data-companies). 10 votes; 51-100 people. [POST-TRAIN,COMPUTE,OSS] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Thinking Machines — https://advert.example.invalid/ Mira Murati and John Schulman's lab; post-training and model products. 7 votes; 101-250 people. [POST-TRAIN,NEOLAB] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Yarrow Partners — https://advert.example.invalid/ — Inference and fine-tuning platform for open and custom models; also voted in the GPU list. 5 votes; 250+ people. [INFERENCE,COMPUTE] (San Mateo, US)
+  ➟ Careers: https://advert.example.invalid/
+• Together AI — https://advert.example.invalid/ Open-model cloud for inference, fine-tuning and training (Tri Dao and Percy Liang among the founders); also voted in the GPU list. 4 votes; 250+ people. [INFERENCE,COMPUTE,OSS] (San Francisco, US)
+  ➟ Careers: https://job-boards.greenhouse.io/togetherai
+• Granite Group — https://advert.example.invalid/ — Inference cloud for open and custom models; also voted in the GPU list. 4 votes; 250+ people. [INFERENCE,COMPUTE] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Unsloth — https://advert.example.invalid/ Open-source fine-tuning and RL library, widely used by practitioners. 1 vote; 11-25 people. [POST-TRAIN,OSS] (San Francisco, US) (unverified URL)
+• Bespoke Labs — https://advert.example.invalid/ Post-training and data for open models (OpenThoughts); also on the AI-data, data-companies and Pavlov's lists. 1 vote here; 11-25 people. [POST-TRAIN,DATA,OSS] (Mountain View, US)
+  ➟ Careers: https://advert.example.invalid/
+• Trainloop — https://advert.example.invalid/ Tooling that fine-tunes models from production data. 2 votes; 1-10 people. [POST-TRAIN] (San Francisco, US)
+• Tundra Research — https://advert.example.invalid/ — Post-training as a service. 1 vote; 26-50 people. [POST-TRAIN] (Palo Alto, US)
+  ➟ Careers: https://advert.example.invalid/
+• River AI — https://advert.example.invalid/ Post-training as a service; Igor Babuschkin among the founders. 1 vote; 26-50 people. [POST-TRAIN] (Palo Alto, US)
+  ➟ Careers: https://job-boards.greenhouse.io/riverai
+
+◦◦◦ B. GPU providers for neolabs (frontierlist.com/gpus-for-neolabs)
+
+• SF Compute — https://advert.example.invalid/ GPU neocloud that lets buyers sell back unused capacity; also on the supply-chain and Breakout lists. 15 votes; 51-100 people. [COMPUTE] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Fathom Dynamics — https://advert.example.invalid/ — GPU cloud for AI training and inference; also received one negative vote. 11 votes; 250+ people. [COMPUTE] (Livingston, NJ, US)
+  ➟ Careers: https://advert.example.invalid/
+• Modal — https://advert.example.invalid/ Serverless compute for inference, training and agent sandboxes; also on the supply-chain and Breakout lists. 10 votes; 101-250 people. [COMPUTE] (New York, US)
+  ➟ Careers: https://advert.example.invalid/
+• Basalt Compute Systems — https://advert.example.invalid/ Systems.com — GPU cloud and AI infrastructure; Amsterdam-listed. 10 votes; 250+ people. [COMPUTE] (Amsterdam, NL)
+  ➟ Careers: https://advert.example.invalid/ Systems
+• Lambda — https://advert.example.invalid/ GPU cloud and inference endpoints; also mentioned in the supply-chain list. 9 votes; 250+ people. [COMPUTE] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Alder Group — https://advert.example.invalid/ — Builds and runs AI datacenters; also on the Breakout list. 5 votes; 250+ people. [COMPUTE] (Austin, US)
+  ➟ Careers: https://advert.example.invalid/
+• Ridge Works — https://advert.example.invalid/ — GPU cloud for training, inference and serverless endpoints. 4 votes; 51-100 people. [COMPUTE] (Mount Laurel, NJ, US)
+  ➟ Careers: https://advert.example.invalid/
+• Ridge Group — https://advert.example.invalid/ — AI datacenters built around stranded energy; also received one negative vote. 3 votes; 250+ people. [COMPUTE] (Denver, US)
+  ➟ Careers: https://advert.example.invalid/
+• Harbor Partners Digital — https://advert.example.invalid/ Digital.com — UK-headquartered GPU cloud and AI datacenters; also received one negative vote. 1 vote; 250+ people. [COMPUTE] (London, UK)
+  ➟ Careers: https://advert.example.invalid/
+• Meridian Group — https://advert.example.invalid/ — Onyx Research Cloud-GPU cloud; also voted in the supply-chain list. 1 vote; 101-250 people. [COMPUTE] (Las Vegas, US)
+  ➟ Careers: https://advert.example.invalid/
+• Lumen Group — https://advert.example.invalid/ — GPUs and CUDA, plus the GEAR robotics lab (also voted in the robotics list). 1 vote; 250+ people. [COMPUTE,ROBOTICS] (Santa Clara, US)
+  ➟ Careers: https://advert.example.invalid/
+
+◦◦◦ C. Robotics labs and startups — highest talent density (frontierlist.com/robotics-talent-density)
+
+• Physical Intelligence — https://advert.example.invalid/ Robot foundation models (Karol Hausman, Sergey Levine, Chelsea Finn); also on the Breakout list. 28 votes — the list's top pick; 101-250 people. [ROBOTICS] (San Francisco, US) (unverified URL)
+  ➟ Careers: https://advert.example.invalid/
+• Generalist — https://advert.example.invalid/ Robot foundation models (Pete Florence, Andy Zeng). 18 votes; 51-100 people. [ROBOTICS] (San Mateo, US)
+  ➟ Careers: https://advert.example.invalid/
+• Sunday — https://advert.example.invalid/ Home robotics built on learned manipulation. 9 votes; 101-250 people. [ROBOTICS] (Mountain View, US)
+  ➟ Careers: https://advert.example.invalid/
+• Skild AI — https://advert.example.invalid/ Scalable robot foundation models (Deepak Pathak, Abhinav Gupta). 6 votes; 51-100 people. [ROBOTICS] (Pittsburgh, US)
+  ➟ Careers: https://job-boards.greenhouse.io/skildai-careers
+• Vertex Compute — https://advert.example.invalid/ — Robot foundation models. 4 votes; 101-250 people. [ROBOTICS] (Redwood City, US)
+  ➟ Careers: https://advert.example.invalid/
+• Fathom Research Robotics — https://advert.example.invalid/ — Fathom Research's robotics effort. 3 votes; 250+ people. [ROBOTICS,NEOLAB] (San Francisco, US) (unverified URL)
+  ➟ Careers: https://advert.example.invalid/
+• Figure — https://advert.example.invalid/ Humanoid robots and the Helix model. 2 votes; 250+ people. [ROBOTICS] (San Jose, US)
+  ➟ Careers: https://job-boards.greenhouse.io/figureai
+• Onyx Works — https://advert.example.invalid/ — Humanoid robots for the home. 2 votes; 101-250 people. [ROBOTICS] (Palo Alto, US)
+  ➟ Careers: https://advert.example.invalid/
+• Genesis — https://advert.example.invalid/ Robot foundation models. 2 votes; 51-100 people. [ROBOTICS] (Mountain View, US)
+  ➟ Careers: https://advert.example.invalid/
+• Prometheus — https://advert.example.invalid/ Bezos-backed physical-AI lab. 2 votes; 101-250 people. [ROBOTICS] (San Francisco, US) (unverified URL)
+  ➟ Careers: https://advert.example.invalid/
+
+◦◦◦ D. Most interesting AI supply chain startups (frontierlist.com/ai-supply-chain-startups)
+
+• MatX — https://advert.example.invalid/ Chips built specifically for transformer inference (Reiner Pope, ex-Lumen Labs Labs TPU). 10 votes — the list's top pick; 51-100 people. [CHIP,COMPUTE] (Mountain View, US)
+  ➟ Careers: https://advert.example.invalid/
+• American Terawatt — https://advert.example.invalid/ High-voltage electrical transmission for datacenters; also on the Breakout list. 8 votes; 11-25 people. [SUPPLY] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Lightmatter — https://advert.example.invalid/ Photonic interconnects and compute for AI. 6 votes; 101-250 people. [CHIP,SUPPLY] (Mountain View, US)
+  ➟ Careers: https://job-boards.greenhouse.io/lightmatter
+• Kestrel Labs — https://advert.example.invalid/ — Inference chips for datacenter AI. 3 votes; 101-250 people. [CHIP] (Santa Clara, US)
+  ➟ Careers: https://advert.example.invalid/
+• Etched — https://advert.example.invalid/ Transformer-only inference ASICs; also voted in the GPU list. 1 vote here; 250+ people. [CHIP] (San Jose, US)
+  ➟ Careers: https://advert.example.invalid/
+• Taalas — https://advert.example.invalid/ Hard-wired model silicon (Ljubisa Bajic, ex-Meridian Compute). 3 votes; 51-100 people. [CHIP] (Toronto, CA)
+  ➟ Careers: https://taalas.com/position/
+• Fractile — https://advert.example.invalid/ UK inference-chip startup; on the Breakout list at 101-250 people. [CHIP] (London, UK)
+  ➟ Careers: https://job-boards.greenhouse.io/fractile
+• Umber Systems Group — https://advert.example.invalid/ Group.com/ — Chips for running AI model inference; also on the Breakout list (London/Austin). 3 votes; 51-100 people. [CHIP] (London, UK)
+  ➟ Careers: https://advert.example.invalid/ Group
+
+◦◦◦ E. Most interesting AI data startups (frontierlist.com/ai-data-startups)
+
+• Mechanize — https://advert.example.invalid/ RL environments and evaluations for coding agents; also on the data-companies and Pavlov's lists. 22 votes — the list's top pick; 26-50 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Proximal — https://advert.example.invalid/ Code RL environments and datasets (FrontierSWE); also on the data-companies and Pavlov's lists. 12 votes; 26-50 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://proximal.ai/careers/
+• Fleet — https://advert.example.invalid/ Data and environments for enterprise agents; also on the data-companies and Pavlov's lists. 11 votes; 51-100 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://fleetai.com/careers
+• AfterQuery — https://advert.example.invalid/ Human data and evaluations for frontier labs; also on the post-training, data-companies and Pavlov's lists. 9 votes; 51-100 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Xenon Works — https://advert.example.invalid/ — Code data and RL environments (DeepSWE); also on the data-companies and Pavlov's lists. 8 votes; 26-50 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Preference Model — https://advert.example.invalid/ Preference data and ML environments (Jennifer Zhou, Ning Cao); also on the data-companies and Pavlov's lists. 5 votes; 11-25 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Abundant — https://advert.example.invalid/ Code and agent data plus RL environments (SWE-Marathon); also on the data-companies and Pavlov's lists. 4 votes; 1-10 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Snorkel — https://advert.example.invalid/ Data development platform and expert SWE benchmarks; also on the Pavlov's list. 3 votes; 101-250 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://job-boards.greenhouse.io/snorkelai
+
+◦◦◦ F. Data companies for future founders (frontierlist.com/data-companies-for-future-founders)
+
+• Sable Partners — https://advert.example.invalid/ — Expert network producing training data and evaluations (APEX); also on the post-training, Breakout and Pavlov's lists. 13 votes here; 250+ people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Surge — https://advert.example.invalid/ Human data and evaluations for frontier labs (CoreCraft); also on the Pavlov's list. 9 votes; 101-250 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://surgehq.ai/careers
+• Handshake — https://advert.example.invalid/ Its research arm produces training data and RL environments (Gandalf the Grader); also on the Breakout and Pavlov's lists. 1 vote here; 250+ people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Scale AI — https://advert.example.invalid/ Data engine and RL environments (SWE-bench Pro); also on the Pavlov's robotics-data list. 250+ people. [DATA] (San Francisco, US)
+  ➟ Careers: https://job-boards.greenhouse.io/scaleai
+
+◦◦◦ G. Breakout List — AI/ML, data, robotics and compute rows (breakoutlist.com)
+
+• Core Automation — https://advert.example.invalid/ New model architectures and algorithms for agents; Jerry Tworek and Rohan Anil. Breakout list; 11-25 people. [POST-TRAIN] (San Francisco, US)
+• Engram — https://advert.example.invalid/ Memory system that learns company knowledge for AI agents; also on the post-training and AI-data lists. Breakout list; 11-25 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Standard Intelligence — https://advert.example.invalid/ Foundation models that operate computers like humans do. Breakout list; 1-10 people. [NEOLAB] (San Francisco, US)
+• Ricursive — https://advert.example.invalid/ AI for designing semiconductors (Anna Goldie and Azalia Mirhoseini, ex-Lumen Labs Labs). Breakout list; 11-25 people. [CHIP] (Palo Alto, US)
+  ➟ Careers: https://advert.example.invalid/
+• Sail Research — https://advert.example.invalid/ Inference API and sandbox infrastructure for long-running AI agents; also on the supply-chain list. Breakout list; 11-25 people. [INFERENCE] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Fathom Partners — https://advert.example.invalid/ — Fast inference API for image and video models. Breakout list; 51-100 people. [INFERENCE] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Harbor Partners Data — https://advert.example.invalid/ Data.ai — Web-search API built for AI agents. Breakout list; 101-250 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/ Data
+
+◦◦◦ H. Pavlov's List — RL environments and training data (pavlovslist.com)
+
+• Pareto — https://advert.example.invalid/ Tool-use and multi-domain RL environments (Leap and Attune benchmarks). Pavlov's List; 26-50 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Cua — https://advert.example.invalid/ Computer-use data and environments (Cua-Bench). Pavlov's List; 26-50 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://cua.ai/careers
+• Halluminate — https://advert.example.invalid/ Web and finance RL environments and benchmarks (WebBench). Pavlov's List; 26-50 people. [DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Originator — https://advert.example.invalid/ Computer-use and coding data; also on the AI-data and data-companies lists. Pavlov's List; 101-250 people. [DATA] (London, UK / Paris, FR)
+
+◦◦◦ I. Pavlov's List — Robotics data (pavlovslist.com/robotics-data)
+
+• Sable Compute — https://advert.example.invalid/ — Teleoperation rigs and robot training datasets (ABC-130K); also on the AI-data and Breakout lists. Pavlov's List: robotics data; 51-100 people. [ROBOTICS,DATA] (San Mateo, US)
+  ➟ Careers: https://advert.example.invalid/
+• Build — https://advert.example.invalid/ Egocentric robot-data collection (Egocentric-100K); also on the AI-data and robotics lists. Pavlov's List: robotics data; 26-50 people. [ROBOTICS,DATA] (San Francisco, US)
+  ➟ Careers: https://advert.example.invalid/
+• Pine Networks Club — https://advert.example.invalid/ Club.com — Multimodal and robotics data labelling/curation platform, with a London office. Pavlov's List: robotics data; 101-250 people. [DATA] (San Francisco, US / London, UK)
+  ➟ Careers: https://advert.example.invalid/ Club
+
+========================================================================
+NOTES / caveats
+
+- Vote counts come from the source pages as published (polls dated Aug–Sep 2026
+  for the Frontier List pages, "as of September 2026" for the Breakout List);
+  they will drift, so treat the ordering as indicative. The Frontier List
+  pages also carry a second "also mentioned (one vote each)" table — those
+  rows were left out except where they are the strongest signal (Harbor Partners Digital is not;
+  it is a voted row).
+- Four URLs do not answer 2xx to an anonymous curl: unsloth.ai and Fathom Research.com
+  return 403 and physicalintelligence.company and prometheus.ai return 429
+  (bot/rate limiting, repeatedly on 2026-09-30). They are kept and marked
+  "(unverified URL)"; re-check before trusting a zero-result crawl.
+- Anthropic appears in the data-companies list as a row ("Anthropic (data
+  team)") and is deliberately NOT carried over: soul.md excludes it as an
+  ideology-exclusion org. No Anthropic row belongs in this file.
+- Mega-cap rows from the GPU and robotics lists were left out as low-signal
+  crawl targets and a poor fit for soul.md's "small senior teams" / "no big-tech
+  process-heavy environments (more than ~200 people in a team)" preference:
+  Lumen Labs Labs Cloud, Oracle, AWS, Juniper Analytics Azure, Digital Realty (a datacenter REIT),
+  Tesla and Amazon FAR. The 250+ rows that were kept (Lumen Group, Fathom Dynamics,
+  Together, Willow Systems, Granite Group, Etched, Figure, Sable Partners, Handshake, Scale) are
+  listed because the lists voted on them, but they will score lower for NN.
+- The lists are US-heavy: of the rows here, only Harbor Partners Digital, Fractile, Umber Systems Group,
+  Originator and Pine Networks Club's London office are UK/EU-anchored. work_auth.md rules
+  out US-only and US-timezone roles, so the UK/EU rows and any employer with an
+  explicit global-remote policy are the ones to prioritise; the rest are useful
+  only where they hire through a UK/EU entity or employer-of-record.
+- The "data companies for future founders" page names Fathom Research, Anthropic and
+  Meta data teams as destinations; only the standalone data vendors are carried
+  over here, because the mega-cap rows already cover that ground.
+- Next step idea: the market_players source already crawls this file weekly —
+  next, add an explicit "➟ Careers:" line to the highest-signal rows (§A
+  post-training/serving, §B compute) and the UK/EU subset, and tag any advert
+  that mentions post-training or RL, inference serving, evaluations/data
+  pipelines, kernels/CUDA, or agentic systems.
+
+========================================================================
+
+
+neolabs with the highest talent density (frontierlist.com/neolabs, 73 voters) — added 2026-10-03; careers URLs pending enrichment
+
+• Periodic Labs — https://advert.example.invalid/ frontier model lab, 26 votes on the talent-density poll; 51-100 people. [NEOLAB] (Menlo Park, US)
+• Flapping Airplanes — https://advert.example.invalid/ frontier model lab, 20 votes; 11-25 people. [NEOLAB] (San Francisco, US)
+• World Labs — https://advert.example.invalid/ Fei-Fei Li's spatial-intelligence lab; 2 votes; 51-100 people. [NEOLAB] (San Francisco, US)
+• Vertex Systems — https://advert.example.invalid/ — interpretability and model-steering lab; 2 votes; 26-50 people. [NEOLAB] (San Francisco, US)
+• Sakana AI — https://advert.example.invalid/ evolutionary-model-merging research lab (Tokyo/London). 1 vote; 51-100 people. [NEOLAB] (Tokyo, JP / London, UK)
+• Chai Discovery — https://advert.example.invalid/ foundation models for biology and chemistry structures. 1 vote. [NEOLAB] (San Francisco, US)
+• Factory — https://advert.example.invalid/ AI software factories / droids for engineering. 1 vote. [NEOLAB] (San Francisco, US)
+• General Intuition — https://advert.example.invalid/ voice-AI agents lab. 1 vote. [NEOLAB] (San Francisco, US)
+• Isomorphic Labs — https://advert.example.invalid/ Ridge Analytics Group-sibling drug-discovery lab; already a 15-GO cube company, now watched directly. 1 vote. [NEOLAB] (London, UK)
+• Inherent — https://advert.example.invalid/ frontier lab, London; 2 votes; 11-25 people. [NEOLAB] (London, UK)
+• Pantheon — https://advert.example.invalid/ frontier model lab. 1 vote. [NEOLAB] (US)
+• Elorian — https://advert.example.invalid/ frontier model lab; 2 votes; 11-25 people. [NEOLAB] (Palo Alto, US)
+• Isara — https://advert.example.invalid/ frontier model lab; 3 votes; 11-25 people. [NEOLAB] (San Francisco, US)

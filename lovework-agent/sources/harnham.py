@@ -15,7 +15,7 @@ from typing import List, Optional
 import yaml
 
 import config
-from crawler import SmartCrawler
+from crawler import SmartCrawler, job_evidence_text
 from job_registry import JobRegistry
 from matcher import JobMatcher
 from wiki_store import WikiEntry, match_fields
@@ -68,6 +68,14 @@ def _load_searches() -> List[dict]:
 
 
 class HarnhamSource:
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = False
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
     """Crawls LJ-maintained Harnham search URLs."""
 
     name = "harnham"
@@ -123,16 +131,18 @@ class HarnhamSource:
                             source=self.name,
                         )
                     except Exception as e:
-                        logger.debug(f"[{self.name}] Registry upsert failed: {e}")
+                        # A swallowed upsert is data loss, and the exception type is
+                        # what separates contract drift from a transient failure
+                        # (LEARNINGS 2026-09-20).
+                        logger.warning(f"[{self.name}] Registry upsert failed "
+                                       f"({type(e).__name__}): {e}")
 
                 if self.matcher is None:
                     continue
 
                 desc = " ".join(filter(None, [
                     reason,
-                    job.description_snippet,
-                    job.requirements_snippet,
-                    job.employment_type,
+                    job_evidence_text(job),
                     "Source is a recruiter search page; consider ghost/stale advert risk.",
                 ]))
                 match = self.matcher.match(

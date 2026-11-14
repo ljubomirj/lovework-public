@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Protocol
 
@@ -56,7 +56,7 @@ class LoveWorkAgentRuntime(Protocol):
 
 
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _new_run_id() -> str:

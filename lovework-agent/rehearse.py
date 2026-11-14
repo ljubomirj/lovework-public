@@ -90,6 +90,7 @@ PROVIDERS: dict[str, tuple[str, str]] = {
 MODEL_PROVIDERS: dict[str, list[str]] = {
     # Mimo is the default crawl model on the OpenCode Go subscription.
     "mimo-v2.5": ["opencode-go"],
+    "mimo-v2.6-flash": ["opencode-go"],
     # DeepSeek models — available on all 3, prefer opencode-go
     "deepseek-chat": ["opencode-go", "deepseek", "openrouter"],
     "deepseek-v4-flash": ["opencode-go", "deepseek", "openrouter"],
@@ -108,6 +109,7 @@ MODEL_PROVIDERS: dict[str, list[str]] = {
 MODEL_NAME_MAP: dict[str, dict[str, str]] = {
     "opencode-go": {
         "mimo-v2.5": "mimo-v2.5",
+        "mimo-v2.6-flash": "mimo-v2.6-flash",
         "deepseek-chat": "deepseek-v4-flash",
         "deepseek-v4-flash": "deepseek-v4-flash",
         "deepseek-reasoner": "deepseek-reasoner",

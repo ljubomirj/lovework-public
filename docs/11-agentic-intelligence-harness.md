@@ -3,6 +3,7 @@
 > **Audience:** builders designing the next LoveWork agent.
 > **See also:** [`09-intelligence-layer.md`](09-intelligence-layer.md), [`02-architecture.md`](02-architecture.md), [`10-ecosystem-survey.md`](10-ecosystem-survey.md), [`12-tau-dependency-strategy.md`](12-tau-dependency-strategy.md).
 > **Local references:** `~/LJ-AI-agents/tau/`, `~/LJ-AI-agents/Continual-Harness-ARC-AGI-3/`.
+> **Fulfilled by:** [`42-the-lovework-agent.md`](42-the-lovework-agent.md) — the agent this chapter's thesis asked for, chartered as an RLM (D23, 2026-10-10).
 
 ## The thesis
 
@@ -316,7 +317,7 @@ was learned from which evidence.
 
 Local, preserved sources for deeper reading:
 
-- `~/Whimsical/doc/Self-evolving_Agents_Taxonomy_x_LoveWork.md` — the prior
+- `~/Whimsical/doc/38-self-evolving-agents-taxonomy.md` — the prior
   LoveWork-specific mapping of Shilong Liu's taxonomy.
 - `~/Whimsical/doc/A_Taxonomy_of_Self-evolving_Agents-X-Shilong_Liu_AI-2074800880017342665-20260709.md`
   and `.txt` — source capture and working notes.
@@ -407,3 +408,16 @@ What should change next time?
 
 If LoveWork captures that loop, it becomes more than a job-search tool. It
 becomes a longitudinal work-fit simulator that learns with the person.
+
+## Dependency order refinement (2026-09-13)
+
+Phases above describe capabilities, not a mandate to build a new runtime first.
+The shared foundation is now [chapter 26](26-asof-strata-history.md) P0–P4:
+seal evidence, record causal inputs/coverage, derive temporal readers, then
+run isolated evaluation. [Chapter 27](27-agent-ergonomics.md) defines a small
+shared read/action facade independent of Tau or Hermes. Use the existing
+reactions/propositions/experiment stores instead of duplicating them in the
+illustrative `intelligence/` memory files. Original decisions and receipts
+are evidence; summaries are versioned views, and learned rules are proposals
+until validated and authorized. A deterministic status read should precede
+any scheduled model-based reflection.

@@ -5,7 +5,7 @@
 > **Date surveyed:** 2026-07-06
 
 Four agentic job-search / career tools live alongside LoveWork under
-`~/LJ-work-2026/`. This chapter surveys each one, contrasts it with LoveWork's
+`~/applications/`. This chapter surveys each one, contrasts it with LoveWork's
 design, and catalogues concrete ideas that could improve LoveWork.
 
 ---
@@ -258,5 +258,5 @@ ready for LJ's review, and give actionable signal instead of a single number.
 
 *This survey was conducted 2026-07-06 by reading each tool's README, CLAUDE.md,
 source code, and key configuration files. Tools live at:
-`~/LJ-work-2026/career-ops/`, `~/LJ-work-2026/ai-job-search/`,
-`~/LJ-work-2026/Resume-Matcher/`, `~/LJ-work-2026/hiring-agent/`.*
+`~/applications/career-ops/`, `~/applications/ai-job-search/`,
+`~/applications/Resume-Matcher/`, `~/applications/hiring-agent/`.*

@@ -11,8 +11,12 @@ to the LLM matcher — this module only EXTRACTS listings (the regex `score_role
 old pipeline is replaced by a cheap noise pre-filter + the matcher).
 
 Cron-safe (assumes scheduled runs):
-  - Scans only `is:unread` LJ-jobs emails and marks each one read after extraction, so a
-    scheduled run never reprocesses the same email.
+  - **Read-only by default** (decoupling plan A7b, 2026-10-21): scans the label's
+    recent mail (`newer_than:` the window) and dedups against the local archive —
+    an archived message is a processed message — so a scheduled run never
+    reprocesses the same email *and never writes to the mailbox*. The old
+    consume-by-marking-read regime (`is:unread` + `modify --remove-labels
+    UNREAD`) survives behind LOVEWORK_GMAIL_MARK_READ=1.
   - Registry hash dedup prevents duplicate job records across emails/runs.
   - Gracefully no-ops (returns []) if Gmail is unavailable (no google_api.py / OAuth token).
 
@@ -22,14 +26,17 @@ TotalJobs, CWJobs, TalentSource, Rec-London, JobServe, Lensa, and Johnson Jobs
 alerts use source-specific parsers below.
 """
 
+import html
+import json
 import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Iterable, Iterator, List, Optional
 
 from job_registry import JobRegistry
-from lead_identity import is_noise_location, is_noise_title
+from lead_identity import is_noise_company, is_noise_location, is_noise_title, is_non_org_name
 from matcher import JobMatcher
 from wiki_store import WikiEntry, match_fields
 
@@ -42,12 +49,21 @@ logger = logging.getLogger(__name__)
 
 # Tunables (env-overridable for tests / manual runs).
 MAX_EMAILS = int(os.getenv("LOVEWORK_GMAIL_MAX_EMAILS", "40"))
-# Mark processed emails read so cron doesn't reprocess them. Set
-# LOVEWORK_GMAIL_MARK_READ=0 to leave mail untouched (e.g. dry debugging).
-MARK_READ = os.getenv("LOVEWORK_GMAIL_MARK_READ", "1") != "0"
+# Read-only by default (A7b, 2026-10-21): dedup is the local archive, not the
+# mailbox's read state, so the `gmail.modify` scope is never needed and other
+# people's inboxes (vj's, kj's) are never written to. LOVEWORK_GMAIL_MARK_READ=1
+# restores the consume-by-marking-read regime unchanged.
+MARK_READ = os.getenv("LOVEWORK_GMAIL_MARK_READ", "0") == "1"
+# How far back a read-only run looks. The archive dedups what it has seen;
+# the window bounds what it asks Gmail for.
+WINDOW_DAYS = int(os.getenv("LOVEWORK_GMAIL_WINDOW_DAYS", "30"))
 # Capture search-results URLs from alert footers and save them as related-harvest seeds. Set
 # LOVEWORK_LI_CAPTURE_GMAIL_SEEDS=0 to disable.
 CAPTURE_GMAIL_SEEDS = os.getenv("LOVEWORK_LI_CAPTURE_GMAIL_SEEDS", "1") != "0"
+# Archive each processed email verbatim under <state>/sources/gmail/<label>/ so
+# parsers can be replayed without Gmail access (see replay_archived_jobs). Set
+# LOVEWORK_GMAIL_ARCHIVE=0 to disable.
+CAPTURE_GMAIL_RAW = os.getenv("LOVEWORK_GMAIL_ARCHIVE", "1") != "0"
 
 
 # Gmail access is provided by the shared gmail_accessor.run_gapi (resolves the right
@@ -61,11 +77,11 @@ def classify_email(msg: dict) -> str:
     sender = msg.get("from", "").lower()
     subject = msg.get("subject", "").lower()
 
-    if "jobs-noreply@linkedin.com" in sender and "application was sent" in subject:
+    if "user@example.invalid" in sender and "application was sent" in subject:
         return "linkedin_app_sent"
-    if "jobalerts-noreply@linkedin.com" in sender:
+    if "user@example.invalid" in sender:
         return "linkedin_alert"
-    if "jobs-listings@linkedin.com" in sender:
+    if "user@example.invalid" in sender:
         return "linkedin_listing"
     if any(d in sender for d in ("workable.com", "workablemail.com")):
         return "ats_workable"
@@ -85,19 +101,155 @@ def classify_email(msg: dict) -> str:
         return "talentsource_alert"
     if "recruitment-london.com" in sender or "rec-london" in sender:
         return "rec_london_alert"
-    if "candidate.admin@apps.jobserve.com" in sender:
+    if "user@example.invalid" in sender:
         return "jobserve_admin"
-    if "jobsbyemail@apps.jobserve.com" in sender:
+    if "user@example.invalid" in sender:
         return "jobserve_alert"
     if "jobserve.com" in sender and "job alert" in subject:
         return "jobserve_alert"
-    if "aggregated@lensa.com" in sender or "jobalert@lensa.com" in sender:
+    if "user@example.invalid" in sender or "user@example.invalid" in sender:
         return "lensa_alert"
-    if "alerts@johnsonjobs.com" in sender:
+    if "user@example.invalid" in sender:
         return "johnsonjobs_alert"
     if "cv-library.co.uk" in sender and "new" in subject:
         return "cv_library_alert"
+    if "jackandjill.ai" in sender:
+        return _classify_jackandjill(subject)
     return "other"
+
+
+# Jack & Jill write from jack@/user@example.invalid. Their mail is either the
+# lead drop (the thing we answer; see jnj_letter.py) or account noise that must
+# never be parsed as leads. Subjects observed across the 2026-02..09 corpus.
+_JACKANDJILL_NOISE_SUBJECTS = (
+    "verification code", "new device signed in", "introduction could earn",
+    "pay you for introducing", "paid too little", "watch jill", "more powerful",
+    "can i ask you something", "friends of jack", "relaunch", "no action needed",
+)
+
+
+def _classify_jackandjill(subject: str) -> str:
+    """Split their mail into the lead drop and everything else."""
+    if any(noise in subject for noise in _JACKANDJILL_NOISE_SUBJECTS):
+        return "jackandjill_other"
+    return "jackandjill_drop"
+
+
+# Their jobs live at app.jackandjill.ai/jobs/<uuid>/post and nowhere else; the
+# uuid is the lead's identity (it is NOT the public feed's <referencenumber> —
+# the drop and the feed are different populations; see docs/24).
+_JACKANDJILL_JOB_RE = re.compile(
+    r"https://app\.jackandjill\.ai/jobs/(?P<uuid>[0-9a-fA-F-]{36})/post[^\s)\"'<>]*"
+)
+_JACKANDJILL_LINK_RE = re.compile(
+    r"\[(?P<text>[^\]]{3,200})\]\((?P<url>https://app\.jackandjill\.ai/jobs/"
+    r"[0-9a-fA-F-]{36}/post[^)]*)\)"
+)
+
+
+def _markdown_links(body: str) -> str:
+    """Rewrite HTML anchors as markdown links so one pattern reads both shapes.
+
+    Their batch mail is HTML (`<li><strong><a href=…>Title at Company</a>`), the
+    single-lead mail is plain text with markdown links. Both carry the same
+    two facts per role — a title and a rationale sentence — so normalise first
+    and parse once.
+    """
+    text = re.sub(
+        r'<a\s[^>]*href="(?P<url>[^"]+)"[^>]*>(?P<text>.*?)</a>',
+        lambda m: f"[{re.sub(r'<[^>]+>', '', m.group('text')).strip()}]({html.unescape(m.group('url'))})",
+        body,
+        flags=re.S | re.I,
+    )
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</(p|li|h[1-6]|div|tr)>", "\n", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html.unescape(text)
+
+
+def parse_jackandjill_drops(body: str) -> list[dict]:
+    """Extract the roles Jack sent, each with his own rationale as description.
+
+    The rationale is real scoring evidence — it is the recruiter's own read of
+    the role against this principal's brief ("UK-remote, GPU workload
+    scheduling…") — so it is passed through as the advert text rather than
+    scoring on the title alone. Location is deliberately left empty: their
+    prose mentions places ("Paris meetups", "US-Remote") that must not become a
+    work-auth hard-kill by accident.
+    """
+    text = _markdown_links(body)
+    jobs: list[dict] = []
+    seen: set = set()
+    for match in _JACKANDJILL_LINK_RE.finditer(text):
+        url = html.unescape(match.group("url")).strip()
+        uuid_match = _JACKANDJILL_JOB_RE.search(url)
+        if not uuid_match:
+            continue
+        uuid = uuid_match.group("uuid")
+        if uuid in seen:
+            continue
+        seen.add(uuid)
+
+        label = re.sub(r"\s+", " ", match.group("text")).strip(" *")
+        company, title = _split_jackandjill_label(label)
+        if not company:
+            # Jack writes some drops as a bold lead-in with a hyperlinked
+            # "[Link]" after it, so the anchor text carries neither title nor
+            # company: `* **Staff Software Engineer (Agentic Engineering) at
+            # Coder** ([Link](…))`. Fall back to that lead-in, which holds
+            # "<title> at <company>" in both shapes.
+            lead_in = _role_label_before_link(text, match.start())
+            lead_company, lead_title = _split_jackandjill_label(lead_in)
+            if lead_company:
+                company, title = lead_company, lead_title
+        if not title or title.lower().strip(" .:") in _GENERIC_ANCHOR_TITLES:
+            continue
+
+        # Everything until the next linked role is Jack's paragraph about this one.
+        tail = text[match.end():]
+        stop = _JACKANDJILL_LINK_RE.search(tail)
+        rationale = re.sub(r"\s+", " ", tail[: stop.start() if stop else 800]).strip(" :*|-")
+        rationale = rationale.split("If you have any issues")[0].strip()
+
+        jobs.append({
+            "title": title,
+            "company": company,
+            "url": url.split("?")[0],
+            "uuid": uuid,
+            "location": "",
+            "description": rationale,
+        })
+    return jobs
+
+
+def _split_jackandjill_label(label: str) -> tuple:
+    """`Member of Engineering (Compute) at poolside` → ("poolside", title)."""
+    text = str(label or "").strip()
+    match = re.match(r"^(?P<title>.+?)\s+at\s+(?P<company>.+)$", text)
+    if not match:
+        return "", text
+    return match.group("company").strip(), match.group("title").strip()
+
+
+# UI chrome, not roles: some mails hyperlink a role uuid under a button's text,
+# and "[View on dashboard]" must not become a lead titled "View on dashboard".
+_GENERIC_ANCHOR_TITLES = frozenset({
+    "link", "click here", "view on dashboard", "go to dashboard", "dashboard",
+    "view role", "view job", "view listing", "apply", "apply now", "see role",
+    "see job", "details", "view details", "learn more", "read more",
+})
+
+
+def _role_label_before_link(text: str, start: int) -> str:
+    """The role label a generic anchor hides, read from the bold lead-in.
+
+    Jack's newer drops put the role in bold and hyperlink the word "Link":
+    `* **Staff Software Engineer (Agentic Engineering) at Coder** ([Link](…))`.
+    Only the same line is searched — the lead-in never wraps onto the next one.
+    """
+    line_start = text.rfind("\n", 0, start) + 1
+    bold = re.findall(r"\*\*(.+?)\*\*", text[line_start:start])
+    return re.sub(r"\s+", " ", bold[-1]).strip() if bold else ""
 
 
 # ── LinkedIn alert parser (ported from lj-jobs-poll.py) ────────────────────
@@ -134,13 +286,94 @@ def is_boilerplate(title: str) -> bool:
     return False
 
 
+def _is_alert_confirmation(body: str) -> bool:
+    """True for a bare "job alert has been created" notice (no adverts).
+
+    The header alone means nothing: 3 of the archived KJ emails open with
+    "Your job alert has been created: Cheminformatics in United Kingdom." and
+    then carry 10 adverts between them. Only a confirmation with no advert
+    block at all is a non-listing — the permissive positional parser invents
+    one from its prose otherwise (title←"Your job alert has been created…",
+    company←"You'll receive notific…").
+    """
+    if not re.search(r"your job alert\b[^\n]{0,80}?\bhas been created", body, re.IGNORECASE):
+        return False
+    return "View job:" not in body
+
+
+def _parse_linkedin_digest(body: str) -> List[dict]:
+    """Parse the LinkedIn digest alert template (2026-09 KJ-jobs):
+
+        Your job alert for <keywords> in <region>
+        A new job matches your preferences.        (or "New jobs match…")
+        <TITLE>
+        <COMPANY>
+        <LOCATION>
+        This company is actively hiring            (optional)
+        View job: <URL>
+        ------------------------------------------------------------
+
+    Advert chunks are dash-rule separated. The legacy sequential parser
+    mis-aligned this shape (title←boilerplate, company←title, location←company)
+    and dropped the "View job:" URL entirely — every KJ lead went out linkless.
+    """
+    jobs: List[dict] = []
+    boiler_prefixes = (
+        "a new job matches", "new jobs match", "new job matches",
+        "your job alert", "you’ll receive notifications",
+        "you'll receive notifications", "view job:", "see all jobs",
+    )
+    # Boilerplate that trails the advert's location line, above the link.
+    trailing_boiler = ("this company is actively hiring", "apply with resume", "apply now")
+    for block in re.split(r"-{15,}", body):
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        url_idx = next(
+            (i for i, ln in enumerate(lines) if ln.lower().startswith("view job:")),
+            None,
+        )
+        if url_idx is None:
+            continue  # footer/upsell chunks carry no advert
+        m = re.match(r"View job:\s*(\S+)", lines[url_idx])
+        url = m.group(1) if m else ""
+        clean = []
+        for ln in lines[:url_idx]:
+            low = ln.lower()
+            if low.startswith(boiler_prefixes) or low.startswith("http"):
+                continue
+            clean.append(ln)
+        while clean and clean[-1].lower().startswith(trailing_boiler):
+            clean.pop()
+        if len(clean) < 2:
+            continue
+        # Every advert closes with title / company / location, so read the
+        # triple from the END. Header boilerplate we have not seen before
+        # ("Your saved job at X is still available") then shifts nothing.
+        triple = clean[-3:]
+        if is_boilerplate(triple[0]):
+            continue
+        jobs.append({
+            "title": re.sub(r"\s+", " ", triple[0]).strip(),
+            "company": triple[1],
+            "location": triple[2] if len(triple) >= 3 else "",
+            "url": url,
+        })
+    return jobs
+
+
 def parse_linkedin_alerts(body: str) -> List[dict]:
     """Extract individual job listings from a LinkedIn alert email body.
 
     Returns a list of dicts with keys title/company/location/url. The
     LinkedIn alert footer's "see all jobs" / "view this search" link is
     captured separately via extract_linkedin_search_url().
+
+    Bodies containing "View job:" lines use the digest template and are
+    parsed by _parse_linkedin_digest, which also captures the per-advert URL.
     """
+    if _is_alert_confirmation(body):
+        return []
+    if "View job:" in body:
+        return _parse_linkedin_digest(body)
     jobs: List[dict] = []
 
     # Drop everything from the footer onward.
@@ -791,7 +1024,7 @@ def parse_johnsonjobs_alerts(body: str) -> list[dict]:
 CV_LIBRARY_SKIP = {
     "apply", "view more", "discover all matching", "search jobs", "edit alerts",
     "unsubscribe", "preferences", "cv-library logo", "run search",
-    "hi ljubomir", "new jobs for you", "matching jobs for your alert",
+    "hi user", "new jobs for you", "matching jobs for your alert",
     "email footer", "all matching jobs", "cv-library email footer",
     "run search", "today run search",
 }
@@ -877,11 +1110,18 @@ def parse_cv_library_alerts(body: str) -> list[dict]:
 # Skips obvious non-fits BEFORE the (expensive) LLM match. The matcher still scores
 # everything that passes — this only avoids wasting LLM calls on clear noise.
 
+# A title carrying any of these is never an "obvious" non-fit, however ordinary
+# the rest of it looks. `agent\w*` matters: without it the plain `agent` word
+# missed "Agentic", so "Staff Software Engineer (Agentic Engineering) at Coder"
+# — a Jack & Jill drop, and exactly this principal's brief — was filtered before
+# the matcher ever saw it.
+_AI_SIGNAL = r"(?:ml|ai|machine|learning|research|llm|agent\w*|genai|nlp|inference)"
+
 OBVIOUS_NONFIT = [
     r"\bquant\b", r"\bquantitative\b", r"\btrader\b", r"\bportfolio\b",
     r"\bdata\s*analyst\b",
-    r"\bsoftware\s*engineer\b(?!.*\b(ml|ai|machine|learning|research|llm|agent)\b)",
-    r"\bfinanc\w*\b(?!.*\b(ml|ai|research|llm|agent|quant)\b)",
+    rf"\bsoftware\s*engineer\b(?!.*\b{_AI_SIGNAL}\b)",
+    rf"\bfinanc\w*\b(?!.*\b{_AI_SIGNAL}\b|\bquant\b)",
     r"\baccount\w*\b", r"\bmarket\w*\b", r"\boperat\w*\b",
 ]
 
@@ -894,6 +1134,14 @@ def is_obvious_nonfit(title: str, company: str = "") -> bool:
 # ── Source ─────────────────────────────────────────────────────────────────
 
 class GmailJobsSource:
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = False
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
     """Ingest supported job alerts from one principal-approved Gmail label."""
 
     def __init__(
@@ -909,16 +1157,31 @@ class GmailJobsSource:
         source_name: str = "gmail_jobs",
         sources_dir: Optional[Path] = None,
         capture_seeds: bool = CAPTURE_GMAIL_SEEDS,
+        capture_raw: bool = CAPTURE_GMAIL_RAW,
+        query: Optional[str] = None,
+        force_ids: Optional[Iterable[str]] = None,
     ):
         self.matcher = matcher
         self.registry = registry
         self.max_emails = max_emails
-        self.mark_read = mark_read
         self.label = label
+        # A query replaces the label as the search scope (the Jack & Jill drop
+        # arrives unlabelled). Query mode never marks mail read — a search like
+        # `from:jackandjill.ai` can match personal correspondence, and the
+        # principal's unread marker is his, not ours.
+        self.query = query
+        self.mark_read = mark_read and not query
         self.credential_home = credential_home
         self.name = source_name
         self.sources_dir = sources_dir
         self.capture_seeds = capture_seeds
+        self.capture_raw = capture_raw
+        # (org, title) already produced in the current run; see _already_seen.
+        self._seen_leads: set = set()
+        # Message ids to read even though they are archived: the escape hatch for
+        # a parser or gate fix, since an archived mail is otherwise never read
+        # again (and query mode cannot mark mail read to signal progress).
+        self.force_ids = {str(i) for i in (force_ids or ())}
 
     def _gapi(self, *args):
         """Call Gmail without changing legacy test and LJ call signatures."""
@@ -926,17 +1189,76 @@ class GmailJobsSource:
             return run_gapi(*args)
         return run_gapi(*args, credential_home=self.credential_home)
 
+    def _search_query(self) -> str:
+        """What to ask Gmail for.
+
+        Query mode reads whatever it matches. Label mode depends on how
+        progress is marked: read-only (the default since A7b) asks for the
+        label's recent window and lets the archive dedup; the legacy
+        consume regime asks for `is:unread` and marks each read.
+        """
+        if self.query:
+            return self.query
+        if not self.mark_read:
+            return f"label:{self.label} newer_than:{WINDOW_DAYS}d"
+        return f"label:{self.label} is:unread"
+
     def run(self) -> List[WikiEntry]:
         entries: List[WikiEntry] = []
+        self._seen_leads.clear()  # dedupe is per run
 
         messages = self._gapi(
-            "gmail", "search", f"label:{self.label} is:unread", "--max", str(self.max_emails)
+            "gmail", "search", self._search_query(), "--max", str(self.max_emails)
         )
-        if not messages:
-            logger.info(f"[{self.name}] No unread {self.label} emails (or Gmail unavailable).")
+        scope = self.query or f"label:{self.label}"
+        if messages is None:
+            logger.warning(
+                f"[{self.name}] Gmail UNAVAILABLE for {scope} — this run "
+                "contributes 0 leads. This is a credential/transport failure, not an "
+                "empty mailbox; check the stored token."
+            )
             return entries
 
-        logger.info(f"[{self.name}] {len(messages)} unread {self.label} email(s) to process")
+        if (self.query or not self.mark_read) and self.sources_dir is not None:
+            # Already archived = already processed — the rule for every mode
+            # that cannot consume mail (query mode, and label mode since A7b
+            # made read-only the default). Only when the record carries a
+            # category this version still knows: see `_archived_as_processed`
+            # for why existence alone is not enough, `_retry_marker` for mail
+            # a parser found nothing in, and `force_ids` for mail a caller
+            # deliberately wants re-read.
+            already = [m for m in messages
+                       if str(m.get("id") or "") not in self.force_ids
+                       and self._archived_as_processed(str(m.get("id") or ""))]
+            if already:
+                messages = [m for m in messages if m not in already]
+                logger.info(
+                    f"[{self.name}] {len(already)} of {len(already) + len(messages)} "
+                    f"{scope} email(s) already archived; skipped"
+                )
+
+        if self.query or not self.mark_read:
+            # A consuming run fetches a body for every recognised mail because
+            # marking it read ends the matter. A non-consuming run cannot, so
+            # mail with no parser would be re-fetched on every single run
+            # forever. Their account codes and marketing are recognisable from
+            # the headers alone — drop them before the body fetch.
+            parsable = [
+                m for m in messages
+                if (self._PARSERS.get(classify_email(m)) or (None, None, False))[0] is not None
+            ]
+            if len(parsable) != len(messages):
+                logger.info(
+                    f"[{self.name}] {len(messages) - len(parsable)} {scope} email(s) "
+                    "carry no parser (account/marketing); not fetched"
+                )
+            messages = parsable
+
+        if not messages:
+            logger.info(f"[{self.name}] No new mail for {scope}.")
+            return entries
+
+        logger.info(f"[{self.name}] {len(messages)} new {scope} email(s) to process")
         for msg in messages:
             try:
                 entries.extend(self._process_email(msg))
@@ -960,6 +1282,11 @@ class GmailJobsSource:
         "lensa_alert":        (parse_lensa_alerts,         None,                            True),
         "johnsonjobs_alert":  (parse_johnsonjobs_alerts,   None,                            True),
         "cv_library_alert":   (parse_cv_library_alerts,    None,                            True),
+        # The drop: hand-picked leads against this principal's brief. Their
+        # other mail (codes, device sign-in, partner marketing) is archived and
+        # deliberately never parsed.
+        "jackandjill_drop":   (parse_jackandjill_drops,    None,                            True),
+        "jackandjill_other":  (None,                       None,                            False),
     }
 
     def _process_email(self, msg: dict) -> List[WikiEntry]:
@@ -980,6 +1307,21 @@ class GmailJobsSource:
             body_resp = self._gapi("gmail", "get", msg_id)
             body = (body_resp or {}).get("body", "") if isinstance(body_resp, dict) else ""
             if body:
+                # Archive before parsing: a parser that fails (or silently
+                # mis-aligns, as the 2026-09-10 digest case did) must still be
+                # replayable offline against the exact text it saw.
+                self._archive_raw(msg, category, body)
+                if _is_alert_confirmation(body):
+                    # Not a digest: nothing to extract, and leaving it unread
+                    # would replay it every run. Consume it silently — this is
+                    # the one recognised email that is safe to consume with
+                    # zero extracted listings.
+                    if self.mark_read and msg_id:
+                        self._gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
+                    logger.info(
+                        f"[{self.name}] consumed alert confirmation {msg_id} without leads"
+                    )
+                    return []
                 raw_jobs = parser_fn(body)
                 if self.capture_seeds and seed_extractor_fn is not None:
                     try:
@@ -989,15 +1331,76 @@ class GmailJobsSource:
                     except Exception as e:
                         logger.debug(f"[{self.name}] seed capture failed: {e}")
 
-        produced: List[WikiEntry] = []
         # P3 — market gates at the boundary: Lensa is a US-market noise
         # source. When disabled, consume the email (mark read) but produce
         # no leads — the listings are not worth scoring for a UK principal.
         if category == "lensa_alert" and not _lensa_enabled():
             if self.mark_read and msg_id:
                 self._gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
-            logger.info(f"[{self.name}] Lensa disabled (US-market noise); consumed {category} {msg_id} without leads")
+            logger.info(
+                f"[{self.name}] Lensa disabled (US-market noise); consumed "
+                f"{category} {msg_id} without leads"
+            )
             return []
+
+        produced = self._entries_from_jobs(raw_jobs, category)
+
+        # Never consume a recognised lead email whose parser found nothing.
+        # A provider changing its template should leave a visible unread item
+        # for inspection rather than silently dropping all of its leads.
+        parsed_successfully = (not is_lead) or bool(raw_jobs)
+        if is_lead and not raw_jobs:
+            logger.warning(
+                f"[{self.name}] {category} email {msg_id} yielded no listings; "
+                + ("leaving it unread" if self.mark_read else
+                   "marked for re-read (parser found nothing)")
+            )
+            self._set_retry(msg_id, True)
+        elif msg_id:
+            self._set_retry(msg_id, False)
+        if self.mark_read and msg_id and parsed_successfully:
+            self._gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
+        return produced
+
+    def _set_retry(self, msg_id: str, wanted: bool) -> None:
+        """Write or clear the retry marker; never fails the run."""
+        if self.sources_dir is None or not msg_id:
+            return
+        marker = self._retry_marker(msg_id)
+        try:
+            if wanted:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text("parser found nothing; re-read until it does\n")
+            elif marker.exists():
+                marker.unlink()
+        except OSError as e:
+            logger.debug(f"[{self.name}] retry marker {msg_id}: {e}")
+
+    def _already_seen(self, org_name: str, title: str) -> bool:
+        """True when this (org, title) was already produced in the current run.
+
+        Alert boards re-send the same advert across several emails; without
+        this the lead is scored once per copy and listed repeatedly in the
+        report (the 2026-09-10 KJ replay: 72 entries, 51 distinct leads).
+        """
+        key = (org_name.strip().lower(), title.strip().lower())
+        if key in self._seen_leads:
+            logger.info(f"[{self.name}] duplicate advert skipped: {org_name} — {title[:60]}")
+            return True
+        self._seen_leads.add(key)
+        return False
+
+    def _entries_from_jobs(self, raw_jobs: List[dict], category: str) -> List[WikiEntry]:
+        """Turn parsed listings into scored entries: noise gates → registry → matcher.
+
+        Shared by the live path (`_process_email`) and the archive replay
+        (`run_from_archive`) so a replayed email is processed exactly like a
+        freshly fetched one. One (org, title) is produced once per run: boards
+        re-send the same advert across alerts (2026-09-10 KJ corpus: one advert
+        arrived 7 times), and each copy used to cost a matcher call and print a
+        duplicate report block.
+        """
+        produced: List[WikiEntry] = []
         for job in raw_jobs:
             # P2 — identity integrity: the title must be the role title and
             # the location a place. Drop subjects, salary strings, dates,
@@ -1014,27 +1417,195 @@ class GmailJobsSource:
                     f"{job['location'][:80]!r}"
                 )
                 continue
+            # P2 — the *company* field needs the same gate as the title: a
+            # mail parser that mis-splits a digest line makes the org a
+            # sentence ("You're a great fit for this role if you have the
+            # following skills:"), which then mints a wiki page named after
+            # it (the 2026-10-07 audit's not-an-org class).
+            #
+            # `company == title` is the parsers' "no company in this card"
+            # convention (a Lensa card with no company line): the company is
+            # *unknown*, not junk, so the org gate must not drop the listing.
+            # The page-minting gate routes such a name to `_Unattributed`.
+            company = job.get("company", "")
+            if company.strip() and company.strip() != job["title"].strip() \
+                    and is_non_org_name(company):
+                logger.info(
+                    f"[{self.name}] dropped non-org company from {category}: "
+                    f"{job.get('company', '')[:80]!r}"
+                )
+                continue
+            # The company column can hold the salary band, the contract type
+            # or a UI string when a card's boundary falls differently
+            # ("Competitive", "400 - 450 per day" — 2026-10-07 audit). A page
+            # named after one is a page nobody can find, so gate it here as
+            # well as at the writer.
+            if is_noise_company(job.get("company", "")):
+                logger.info(
+                    f"[{self.name}] dropped noise company from {category}: "
+                    f"{job.get('company', '')[:80]!r}"
+                )
+                continue
             if is_obvious_nonfit(job["title"], job.get("company", "")):
+                continue
+            if self._already_seen(job["company"], job["title"]):
                 continue
             entry = self._make_entry(
                 org_name=job["company"], title=job["title"],
                 url=job.get("url", ""), location=job.get("location", ""),
+                description=job.get("description", ""),
             )
             if entry is not None:
                 produced.append(entry)
-
-        # Never consume a recognised lead email whose parser found nothing.
-        # A provider changing its template should leave a visible unread item
-        # for inspection rather than silently dropping all of its leads.
-        parsed_successfully = (not is_lead) or bool(raw_jobs)
-        if is_lead and not raw_jobs:
-            logger.warning(
-                f"[{self.name}] {category} email {msg_id} yielded no listings; "
-                "leaving it unread"
-            )
-        if self.mark_read and msg_id and parsed_successfully:
-            self._gapi("gmail", "modify", msg_id, "--remove-labels", "UNREAD")
         return produced
+
+    def _archive_path(self, msg_id: str) -> Path:
+        """Path of the archived record for one message."""
+        return self.sources_dir / "gmail" / _archive_slug(self.label) / f"{msg_id}.json"
+
+    def _archived_as_processed(self, msg_id: str) -> bool:
+        """Whether the archive accounts for this message *as parsed*.
+
+        Existence alone is not proof: a record whose category this version does
+        not recognise was written by an older classifier, so its mail was
+        archived but never handed to a parser (the Jack & Jill drops of
+        2026-09-05 and 09-12 sat under the literal category "other" that way,
+        and the drop ingest could never see them again).
+        """
+        path = self._archive_path(msg_id)
+        if not path.exists():
+            return False
+        if self._retry_marker(msg_id).exists():
+            # A lead email whose parser found nothing: archived (replayable)
+            # but not *processed* — re-read it each run until a parser fix
+            # lands, which is what "leave it unread" used to mean.
+            return False
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        return str(record.get("category") or "") in self._PARSERS
+
+    def _retry_marker(self, msg_id: str) -> Path:
+        """Beside the archive record: present = "a parser found nothing here"."""
+        path = self._archive_path(msg_id)
+        return path.with_name(path.name + ".retry")
+
+    def _archive_raw(self, msg: dict, category: str, body: str) -> None:
+        """Persist the email verbatim so parsers replay without Gmail.
+
+        One JSON record per message under `<sources_dir>/gmail/<label>/`. The
+        archive is the processed corpus: exactly the text the parsers saw,
+        including emails whose parser extracted nothing (those are precisely
+        the ones worth replaying after a template change).
+
+        Never fails a crawl — archival problems are logged, not raised. The
+        directory ignores itself via `.gitignore` because these are the
+        principal's private messages and state/ is otherwise partially tracked.
+        """
+        if not self.capture_raw or self.sources_dir is None:
+            return
+        msg_id = str(msg.get("id") or "")
+        if not msg_id:
+            return
+        try:
+            label_dir = self.sources_dir / "gmail" / _archive_slug(self.label)
+            label_dir.mkdir(parents=True, exist_ok=True)
+            ignore = label_dir / ".gitignore"
+            if not ignore.exists():
+                ignore.write_text("*\n")
+            record = {
+                "id": msg_id,
+                "label": self.label,
+                "source": self.name,
+                "category": category,
+                "from": msg.get("from", ""),
+                "subject": msg.get("subject", ""),
+                "date": msg.get("date", ""),
+                "archived_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "body": body,
+            }
+            (self._archive_path(msg_id)).write_text(
+                json.dumps(record, ensure_ascii=False, indent=1)
+            )
+        except Exception as e:
+            logger.warning(f"[{self.name}] raw-email archive failed for {msg_id}: {e}")
+
+    def backfill_archive(self, query: Optional[str] = None) -> int:
+        """Archive the label's existing mail (read and unread) without parsing.
+
+        The run path archives only what it processes (`is:unread`), so already
+        consumed mail is otherwise never captured. This one-shot fill puts the
+        whole label on disk so a template change can be replayed against the
+        full corpus. It fetches bodies only — never marks read, scores, or
+        writes seeds — and skips messages already archived, so re-running is
+        free.
+
+        Returns the number of emails archived.
+        """
+        if not self.capture_raw or self.sources_dir is None:
+            return 0
+        messages = self._gapi(
+            "gmail", "search", query or f"label:{self.label}", "--max", str(self.max_emails)
+        )
+        if messages is None:
+            logger.warning(
+                f"[{self.name}] archive backfill: Gmail unavailable for {self.label} "
+                "(credential/transport failure, not an empty mailbox)"
+            )
+            return 0
+        archived = 0
+        for msg in messages or []:
+            msg_id = str(msg.get("id") or "")
+            if not msg_id:
+                continue
+            try:
+                if self._archive_path(msg_id).exists():
+                    continue
+                resp = self._gapi("gmail", "get", msg_id)
+                body = (resp or {}).get("body", "") if isinstance(resp, dict) else ""
+                if body:
+                    self._archive_raw(msg, classify_email(msg), body)
+                    archived += 1
+            except Exception as e:
+                logger.warning(f"[{self.name}] archive backfill failed for {msg_id}: {e}")
+        logger.info(f"[{self.name}] archive backfill: {archived} new email(s) of {len(messages or [])}")
+        return archived
+
+    def run_from_archive(self, label: Optional[str] = None) -> List[WikiEntry]:
+        """Re-ingest the archived corpus through the registry and the matcher.
+
+        The offline equivalent of `run()`: reads the emails saved by
+        `_archive_raw`, re-parses them with the current parsers, and scores the
+        leads exactly as a live crawl does (same market/noise gates, registry
+        upserts, matcher). It makes no Gmail call and marks nothing read, so it
+        can put a parser fix into the principal's registry, org pages and report
+        without waiting for the next crawl — or replay a corpus whose mail has
+        already been consumed.
+        """
+        entries: List[WikiEntry] = []
+        if self.sources_dir is None:
+            logger.warning(f"[{self.name}] archive replay needs sources_dir; nothing to replay")
+            return entries
+        self._seen_leads.clear()  # dedupe is per replay
+
+        archived = list(iter_archived_emails(self.sources_dir, label or self.label))
+        for record in archived:
+            category, parser_info = _resolve_archived_category(record)
+            if parser_info[0] is None:
+                continue  # non-lead category, archived for audit only
+            body = record.get("body") or ""
+            if not body or _is_alert_confirmation(body):
+                continue
+            if category == "lensa_alert" and not _lensa_enabled():
+                continue  # same market gate as the live path
+            entries.extend(self._entries_from_jobs(parser_info[0](body), category))
+
+        logger.info(
+            f"[{self.name}] archive replay: {len(archived)} archived email(s) → "
+            f"{len(entries)} entr(ies)"
+        )
+        return entries
 
     def _save_seed(self, category: str, search_url: str):
         """Save a seed URL for related-ads harvesting."""
@@ -1056,7 +1627,10 @@ class GmailJobsSource:
             except Exception as e:
                 logger.debug(f"[{self.name}] Failed to save seed: {e}")
 
-    def _make_entry(self, org_name: str, title: str, url: str, location: str) -> Optional[WikiEntry]:
+    def _make_entry(
+        self, org_name: str, title: str, url: str, location: str,
+        description: str = "",
+    ) -> Optional[WikiEntry]:
         record = None
         if self.registry is not None:
             try:
@@ -1065,22 +1639,29 @@ class GmailJobsSource:
                     careers_url="", source=self.name,
                 )
             except Exception as e:
-                logger.debug(f"[{self.name}] Registry upsert failed: {e}")
+                # A swallowed upsert is data loss, and the exception type is
+                # what separates contract drift from a transient failure
+                # (LEARNINGS 2026-09-20).
+                logger.warning(f"[{self.name}] Registry upsert failed "
+                               f"({type(e).__name__}): {e}")
 
         if self.matcher is None:
             return None  # nothing to do without a matcher
 
-        # LinkedIn alerts carry no role description — pass location as the sparse context
-        # AND as the location field (so the work-auth hard-kill + the LLM see geography).
+        # Parsers that can supply advert text use it (the Jack & Jill drop
+        # carries the recruiter's own rationale). Everything else passes
+        # location as the sparse context AND as the location field, so the
+        # work-auth hard-kill and the LLM still see geography.
+        context = (description or "").strip() or location or ""
         match = self.matcher.match(
-            title, location or "", org_name, job_url=url or "", location=location or "",
+            title, context, org_name, job_url=url or "", location=location or "",
         )
         entry = WikiEntry(
             org_name=org_name, title=title,
             url=url or None, location=location or None,
             score=match.score, decision=match.decision, reasoning=match.reasoning,
             source=self.name,
-            advert_excerpt=location or "",
+            advert_excerpt=context,
             **match_fields(match),
         )
         if record is not None:
@@ -1099,3 +1680,101 @@ class GmailLjJobsSource(GmailJobsSource):
             kwargs["label"] = GMAIL_LJ_JOBS_LABEL
         kwargs.setdefault("source_name", self.name)
         super().__init__(*args, **kwargs)
+
+
+# ── Raw-email archive (replay without Gmail) ────────────────────────────────
+#
+# GmailJobsSource._archive_raw writes one record per processed email to
+# <state>/sources/gmail/<label>/<msg_id>.json. These helpers read it back, so a
+# parser change can be validated against the real corpus with no Gmail access:
+#
+#     from pathlib import Path
+#     from sources.gmail_lj_jobs import replay_archived_jobs
+#     jobs = replay_archived_jobs(Path("state/kj/sources"), "KJ-jobs")
+
+
+def _archive_slug(label: str) -> str:
+    """Filesystem-safe label directory name (`KJ-jobs` → `KJ-jobs`)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", str(label)).strip("_") or "label"
+
+
+def iter_archived_emails(sources_dir, label: str) -> Iterator[dict]:
+    """Yield archived email records for `label`, filename order.
+
+    Each record carries the verbatim `body` the parsers saw, plus
+    id/label/category/from/subject/archived_at.
+    """
+    label_dir = Path(sources_dir) / "gmail" / _archive_slug(label)
+    for path in sorted(label_dir.glob("*.json")):
+        try:
+            record = json.loads(path.read_text())
+        except (OSError, ValueError) as e:
+            logger.warning(f"[gmail-archive] unreadable {path}: {e}")
+            continue
+        yield _with_current_category(record)
+
+
+def _with_current_category(record: dict) -> dict:
+    """Upgrade an archived record whose stored category predates its parser.
+
+    The archive records the category as of the day the mail was processed, so a
+    message backfilled before a parser existed keeps `"other"` for ever — and
+    every consumer that dispatches on the stored category (`replay_archived_jobs`,
+    `run_from_archive`, the per-source report) then skips it. That is exactly how
+    the 60 backfilled Jack & Jill drops stayed invisible: 123 leads of the
+    highest-value email channel, classified `other` one day before the parser
+    landed. Classifying at read time fixes all three consumers at once, without
+    rewriting the principal's private archive.
+    """
+    stored = str(record.get("category") or "")
+    if GmailJobsSource._PARSERS.get(stored):
+        return record
+    fresh = classify_email({
+        "from": record.get("from", ""),
+        "subject": record.get("subject", ""),
+    })
+    if fresh != stored and GmailJobsSource._PARSERS.get(fresh):
+        logger.info(
+            f"[gmail-archive] {record.get('id', '?')}: reclassified {stored!r} -> {fresh!r}"
+        )
+        return {**record, "category": fresh, "category_reclassified_from": stored}
+    return record
+
+
+def _resolve_archived_category(record: dict) -> tuple:
+    """How an archived record should be processed now: (category, parser_info).
+
+    The recorded category wins when this version still knows it. Otherwise the
+    mail was shelved before its parser existed, so the record is re-classified
+    from the archived headers (`from`/`subject` are kept verbatim) — without
+    that, those emails are unparseable forever.
+    """
+    category = str(record.get("category") or "")
+    parser_info = GmailJobsSource._PARSERS.get(category)
+    if parser_info and parser_info[0] is not None:
+        return category, parser_info
+    category = classify_email(record)
+    parser_info = GmailJobsSource._PARSERS.get(category)
+    if parser_info and parser_info[0] is not None:
+        return category, parser_info
+    return category, (None, None, False)
+
+
+def replay_archived_jobs(sources_dir, label: str) -> List[dict]:
+    """Re-parse every archived email with the current parsers.
+
+    Returns the listing dicts a crawl would parse, each tagged with the archive
+    `id` and `category` it came from.
+    """
+    jobs: List[dict] = []
+    for record in iter_archived_emails(sources_dir, label):
+        category, parser_info = _resolve_archived_category(record)
+        if parser_info[0] is None:
+            continue
+        for job in parser_info[0](record.get("body", "")):
+            jobs.append({
+                **job,
+                "id": record.get("id", ""),
+                "category": category,
+            })
+    return jobs

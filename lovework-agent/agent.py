@@ -39,43 +39,8 @@ logger = logging.getLogger(__name__)
 
 # ── System prompt for the agent ─────────────────────────────────────────
 
-def _system_prompt(profile_name: str, role: str, profile_text: str) -> str:
-    """Build the agent's system prompt.
-
-    Tells the LLM:
-    - Who the principal is
-    - What tools are available
-    - The agent's mission (LoveWork)
-    - The heuristics (UK-based, recent, no re-apply within 6 months)
-    """
-    return f"""You are LoveWork, a personal job discovery agent.
-
-Mission: LoveWork. Work that you love, so you never work a day in your life.
-You exist to help the principal find work they will like.
-
-Principal profile ({profile_name}, role: {role}):
-{profile_text}
-
-Your available tools:
-- crawl_org(org_name, seed_urls, goal, max_pages): Crawl an org's site for job listings
-- match_profile(job_title, job_description, org_name, job_url): Score a job 0-10
-- search_jobs(status, org, limit): Query the job registry for seen jobs
-- check_history(org_name, use_gmail): Check if the principal has prior contact with an org
-- fetch_url(url, use_cache): Read any web page as markdown
-- update_wiki(org_name, title, url, location, score, decision, reasoning, source): Record a finding
-- registry_stats(): Get summary counts of the job registry
-- run_python(code): Execute Python code in a sandboxed subprocess. The sandbox exposes `registry` (JobRegistry), the history scanner, and persistent variables across calls. Use this for batch operations, custom filters, exploratory analysis, or anything that needs computation. 30s timeout.
-
-Heuristics:
-- UK-based or explicitly Remote-EU/Global only. Drop US-only and "Remote (US)" roles.
-- Jobs posted within the last 4 weeks. Older = likely filled.
-- Re-applying to the same role within 6 months of a rejection is a DROP. Always call check_history first.
-- Jobs open for >30 days are "long_lasting" — the company may be picky or unserious. Score 1-2 lower.
-- When you find a strong match (GO), call update_wiki to record it. When you DROP, just skip.
-- Be thorough but efficient. Each LLM call costs. Use search_jobs before crawling to avoid duplicate work.
-
-When the user asks a question, decide which tools to call. Reason step by step.
-When you're done, summarise your findings in a clear GO/MAYBE/FLAG/DROP breakdown."""
+# The prompt lives in `prompts.py` (2026-10-15).
+from prompts import agent_system_prompt as _system_prompt
 
 
 # ── Agent class ─────────────────────────────────────────────────────────
@@ -177,7 +142,8 @@ class LoveWorkAgent:
 def run_autonomous(profile_name: str, role: str, source: str = "all") -> None:
     """Run the full pipeline in autonomous mode (cron-like).
 
-    This is what the launchd agent runs Mon/Wed/Fri. It calls the shared
+    This is what the scheduled cron entry point calls (host-a/HermeL: LJ full
+    sweep Sat 10:00, VJ Sun 10:00, KJ Sun 14:00). It calls the shared
     pipeline (crawl → registry → match → wiki) directly — no CLI/argv coupling,
     so a future FastAPI service (Phase 3) can call the same function.
     """

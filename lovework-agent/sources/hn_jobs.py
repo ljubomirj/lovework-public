@@ -211,6 +211,15 @@ def _split_title_to_org_role(title: str) -> tuple[str, str]:
 # ── Source ────────────────────────────────────────────────────────────────
 
 class HNHiringJobsSource:
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = True
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
+
     """Reads the live HN /jobs page and surfaces matching listings."""
 
     name = "hn_jobs"
@@ -280,11 +289,19 @@ class HNHiringJobsSource:
                 record = self.registry.upsert(
                     org=org, title=role, url=url,
                     careers_url=comment_url, source=self.name,
+                    primary=self.primary,
                     discovery_url=comment_url,
                     discovery_date=discovery_date,
+                    # The page states the advert's age, so this is a posting
+                    # date rather than a discovery date (docs/28 §WP3a).
+                    posted_at=discovery_date,
                 )
             except Exception as e:
-                logger.debug(f"[{self.name}] Registry upsert failed: {e}")
+                # A swallowed upsert is data loss, and the exception
+                # *type* is what separates contract drift from a
+                # transient failure (LEARNINGS 2026-09-20).
+                logger.warning(f"[{self.name}] Registry upsert failed "
+                               f"({type(e).__name__}): {e}")
 
         # Use the original terse title in the wiki so the reader sees the
         # actual HN posting, not our best-effort split.

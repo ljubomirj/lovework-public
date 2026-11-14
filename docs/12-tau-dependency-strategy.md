@@ -32,7 +32,7 @@ the 3.13 migration:
 
 - Tau declares `requires-python = ">=3.12"`, `name = "tau-ai"`.
 - LoveWork now declares `requires-python = ">=3.13"` and runs on Python 3.13 on
-  gigul2.
+  host-a.
 - `agent_runtime.tau_dependency_status()` reports Tau as `ready` at the version
   level: `python_ok=True`, `can_import_tau_agent=True`.
 
@@ -107,7 +107,7 @@ Use while iterating locally:
 ```toml
 [project.optional-dependencies]
 harness-dev = [
-  "tau-ai @ file:///home/ljubomir/LJ-AI-agents/tau",
+  "tau-ai @ file:///home/user/LJ-AI-agents/tau",
 ]
 ```
 

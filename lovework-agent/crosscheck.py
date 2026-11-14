@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 
 import config
+from writer_boundary import WriterBusy, standalone_writer_guard
 from history import scan_history
 from wiki_store import WikiEntry, WikiStore
 
@@ -207,17 +208,15 @@ def cross_check(
         return None
 
     if wiki is not None:
-        block = (
-            f"### {today} — prior contact found\n\n"
-            f"- **Source entry**: {title} ({score:.1f}/10) — {url or 'no url'}\n"
-            f"- **Prior contact**: {prior.summary()}\n"
+        # A note, not a finding: it has no verdict. Hand-building the block
+        # text here embedded a second "### " heading inside the block and left
+        # an empty Decision (2026-10-07 audit).
+        wiki.update_org_note(
+            org, "prior-contact cross-check", source="cross_check", day=today,
+            title="prior contact found", url=url or "",
+            fields={"Source entry": f"{title} ({score:.1f}/10) — {url or 'no url'}",
+                    "Prior contact": prior.summary()},
         )
-        # Append via update_org_page (append-only by design).
-        wiki.update_org_page(WikiEntry(
-            org_name=org, title="(prior-contact cross-check)",
-            url=None, location=None, score=0.0, decision="",
-            reasoning=block, source="cross_check",
-        ))
     return {
         "org": org,
         "title": title,
@@ -228,11 +227,32 @@ def cross_check(
 
 
 def main():
+    """Direct invocation: hold the writer lease, then crosscheck the principal's prior contact."""
+    args = _parse_args()
+    principal = args.profile
+    state_root = config.STATE_DIR / principal
+    try:
+        with standalone_writer_guard(principal, mode="direct", state_root=state_root,
+                                     shared=()):
+            return _crosscheck_body(args)
+    except WriterBusy as busy:
+        print(f"[LOCK] writer busy: {busy.resource.key} — another operation holds "
+              f"this principal's lease (attempt recorded at {busy.attempt_path})")
+        raise SystemExit(75)
+
+
+def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--profile", default="lj", choices=["lj"],
+                        help="Principal (prior-contact cross-check currently supports LJ only)")
     parser.add_argument("--report", type=Path, help="Specific report file")
     parser.add_argument("--org", help="Cross-check only this org (substring match)")
     parser.add_argument("--include-maybe", action="store_true", help="Also check MAYBE listings")
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def _crosscheck_body(args=None):
+    args = args or _parse_args()
 
     report = args.report or latest_report()
     if report is None or not report.exists():

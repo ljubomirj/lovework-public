@@ -7,7 +7,7 @@
 
 **LoveWork** is the mission. **LoveWork** is the product.
 
-> *Work that you love, so you never work a day in your life.*
+> *Work what you love and love your work.*
 
 All humans are capable of this. Most don't discover enough — or they run out
 of time. LoveWork is on a mission to speed that up 1000×. Humans are built to

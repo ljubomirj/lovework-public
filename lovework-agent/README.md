@@ -32,7 +32,7 @@ See [`../README.md`](../README.md) for the project overview and
 ### `main.py` (autonomous)
 - `--profile {lj,vj,kj,pk}` — which principal profile
 - `--role ROLE` — specific role file under `profiles/<name>/roles/`
-- `--source {all,research_orgs,neolabs,hf_startups,hn_hiring,hn_jobs,gmail_lj_jobs,linkedin_related,company_pages,harnham}` — data source
+- `--source {all,research_orgs,neolabs,neoclouds,hf_startups,hn_hiring,hn_jobs,gmail_lj_jobs,linkedin_related,company_pages,harnham,digitaljobs}` — data source
 - `--report` — generate markdown report
 - `--json` — output findings as JSON
 - `--dry-run` — skip wiki writes
@@ -54,11 +54,13 @@ Environment variables (in `.env` or shell):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DEEPSEEK_API_KEY` / `LLM_API_KEY` | — | LLM API key (required) |
-| `FIRECRAWL_API_KEY` | — | Web scraping API key (recommended) |
-| `LLM_MODEL` | `deepseek-chat` | Model to use |
+| `EXA_API_KEY` | — | Page fetcher, primary (Exa.ai); also resolvable from `~/.lovework/credentials/search/exa_api_key` |
+| `FIRECRAWL_API_KEY` | — | Page fetcher, paused 2026-10-05 — kept wired, re-enabled via `LOVEWORK_FETCH_PROVIDERS` |
+| `LOVEWORK_FETCH_PROVIDERS` | `exa,http` | Fetch backends in preference order (`exa`, `firecrawl`, `http`) |
+| `LLM_MODEL` | `deepseek-v4.1-flash` | Model to use |
 | `LLM_BASE_URL` | `https://api.deepseek.com/v1` | API base URL |
 | `LLM_TEMPERATURE` | `0.3` | Sampling temperature |
-| `LLM_MAX_TOKENS` | `4096` | Max output tokens |
+| `LLM_MAX_TOKENS` | `131072` | Max output tokens (a ceiling, deliberately generous — the model stops when done) |
 | `MAX_PAGES_PER_ORG` | `4` | Crawl depth per org |
 | `MAX_DEPTH` | `2` | Max link-follow depth |
 | `MAX_JOB_AGE_WEEKS` | `4` | Filter out jobs older than this |
@@ -69,6 +71,15 @@ Environment variables (in `.env` or shell):
 | `LOVEWORK_APPLICATIONS_DIR` | `<lovework>/applications` | Prior applications |
 | `LOVEWORK_HF_TRACKER_DIR` | `<lovework>/AI-for-HF-startup-tracker` | HF tracker |
 | `LOVEWORK_NEOLAB_TRACKER` | `<lovework>/neolab-and-emerging-ai-lab-tracker.txt` | Neolab tracker |
+| `LOVEWORK_DIGITALJOBS_MAX_SEARCHES` | `10` | Digital Jobs MCP searches per run |
+| `LOVEWORK_DIGITALJOBS_MAX_PAGES` | `4` | Cursor pages per search |
+| `LOVEWORK_DIGITALJOBS_PAGE_SIZE` | `50` | Results per page (server caps anonymous at 50) |
+| `LOVEWORK_DIGITALJOBS_TIMEOUT` | `30` | Per-request timeout (s) |
+| `LOVEWORK_DIGITALJOBS_REQUEST_DELAY` | `1.0` | Seconds between MCP requests (anonymous rate limit) |
+| `LOVEWORK_DIGITALJOBS_MAX_RETRIES` | `3` | Attempts per request when the API returns HTTP 429 |
+| `LOVEWORK_DIGITALJOBS_RETRY_BACKOFF` | `10.0` | Base seconds between 429 retries (linear; `Retry-After` wins) |
+| `LOVEWORK_DIGITALJOBS_MAX_RETRY_WAIT` | `90` | Ceiling for a single 429 wait |
+| `LOVEWORK_DIGITALJOBS_MCP_URL` | `https://www.digitaljobs.com/mcp` | Endpoint override |
 
 ## File layout
 
@@ -135,9 +146,9 @@ Check permissions on the wiki directory. The `wiki/` dir should be writable.
 
 ### Profile not found
 ```
-ValueError: Profile not found: lj (looked in /path/to/profiles/lj)
+ValueError: Profile not found: lj (looked in /path/to/profiles/example)
 ```
-Make sure `profiles/lj/soul.md` exists. Run `--list-profiles` to see what's available.
+Make sure `profiles/example/soul.md` exists. Run `--list-profiles` to see what's available.
 
 ### Role not found
 ```
@@ -178,6 +189,29 @@ Run `--list-profiles` to see available roles.
 
 Create `profiles/<name>/roles/my-role.md` with role-specific criteria. Run with
 `--role my-role`.
+
+## Point-in-time history (strata subsystem)
+
+The `strata*` modules are the point-in-time history track (point-in-time
+"what did we know on D" — spec: `../docs/26`, living plan + code map:
+`../docs/28` §10). WP0, the standalone WP1a engine and WP2a readers are
+shipped and fixture-tested; not yet wired into crawls (WP1b), with zero live
+seals as of 2026-09-17. Development is on host-b; scheduled crawls and the
+materialised live state remain on host-a:
+
+```bash
+../venv/bin/python3 history_inventory.py --profile lj   # provenance inventory
+../venv/bin/python3 strata.py --profile lj status       # sealed bundles
+../venv/bin/python3 strata.py --profile lj verify --deep
+../venv/bin/python3 asof.py --profile lj runs           # point-in-time reads
+../venv/bin/python3 asof.py --profile lj state --at 2026-09-14T12:00:00+00:00
+```
+
+Modules: `strata_manifest.schema.json` + `strata_contract.py` (frozen
+contracts), `strata_fixture.py` (test corpus), `strata.py` (seal engine),
+`run_context.py` (run identity/pinned inputs), `asof.py` (readers +
+journal), `history_inventory.py`.
+They deliberately import nothing from the crawl path.
 
 ## See also
 

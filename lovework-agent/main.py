@@ -17,12 +17,49 @@ Environment:
 import argparse
 import json
 import logging
+import os
 import sys
+from contextlib import nullcontext
 
 import config
 from principal_runtime import resolve_principal_runtime
 from job_registry import JobRegistry
 from pipeline import run_pipeline
+from wiki_store import WikiStore
+from notify import human_slug
+from writer_boundary import WriterBusy, standalone_writer_guard
+
+DASHBOARD_BASE_URL = os.getenv("LOVEWORK_DASHBOARD_URL", "http://192.0.2.10:8765")
+
+# How many MAYBE listings the results block prints (the GO section is never
+# capped). The email body is this block, so 0 lists every MAYBE — useful when
+# the notification is the reader's whole view of the run.
+MAYBE_LIST_MAX = int(os.getenv("LOVEWORK_LIST_MAYBE_MAX", "10"))
+
+
+def _print_listing(e, runtime) -> None:
+    """One lead with every follow-up surface available (2026-09-10 feedback):
+    the public advert when the source captured one, the dashboard org page
+    (private view), the local file, and the structured fields we have."""
+    print(f"  [{e.score:.1f}] {e.org_name} — {e.title}")
+    if e.location:
+        print(f"        location: {e.location}")
+    if getattr(e, "salary", ""):
+        print(f"        salary: {e.salary}")
+    if getattr(e, "seniority", ""):
+        print(f"        seniority: {e.seniority}")
+    if getattr(e, "original_url", "") and e.original_url != e.url:
+        # Resolved past an intermediary (LinkedIn): show the original advert,
+        # with where we found it in parentheses.
+        print(f"        ad: {e.original_url}")
+        print(f"        via: {human_slug(e.url)}")
+    elif e.url:
+        print(f"        ad: {e.url}")
+    safe = WikiStore._safe_filename(e.org_name)
+    print(f"        more: {DASHBOARD_BASE_URL}/principals/{runtime.profile_name}/wiki/orgs/{safe}.md")
+    local_page = runtime.wiki_root / "orgs" / f"{safe}.md"
+    if local_page.exists():
+        print(f"        local: {local_page}")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -34,13 +71,12 @@ logger = logging.getLogger("lovework-agent")
 
 def list_profiles() -> None:
     print("Available profiles and roles:")
-    for p in sorted(config.PROFILES_DIR.iterdir()):
-        if p.is_dir():
-            roles = config.list_roles(p.name)
-            print(f"  {p.name}/")
-            print(f"    soul.md, cv-short.md, bio-long.md")
-            for r in roles:
-                print(f"    roles/{r}.md")
+    for name in sorted(config.profile_dirs()):
+        roles = config.list_roles(name)
+        print(f"  {name}/")
+        print(f"    soul.md, cv-short.md, bio-long.md")
+        for r in roles:
+            print(f"    roles/{r}.md")
     print()
     print("Usage: python main.py --profile <name> --role <role> --source all")
 
@@ -60,7 +96,25 @@ def main():
     parser.add_argument("--list-profiles", action="store_true", help="List available profiles/roles and exit")
     parser.add_argument("--registry-stats", action="store_true", help="Print job registry stats and exit")
     parser.add_argument("--dspy", action="store_true", help="Use DSPy typed signatures instead of legacy prompts")
+    parser.add_argument(
+        "--run-id",
+        default=None,
+        help="Outer operation id (crawl_operation.py): the ledger row shares "
+             "this identity instead of minting a second UUID",
+    )
+    parser.add_argument(
+        "--replay-archive",
+        action="store_true",
+        help="Re-ingest the principal's archived Gmail emails instead of contacting "
+             "Gmail (requires --source <gmail source>, e.g. gmail_kj_jobs)",
+    )
     args = parser.parse_args()
+
+    if args.replay_archive and args.source == "all":
+        parser.error(
+            "--replay-archive needs an explicit Gmail source, e.g. "
+            "--source gmail_kj_jobs (its archive is state/<principal>/sources/gmail/)"
+        )
 
     if args.list_profiles:
         list_profiles()
@@ -74,14 +128,42 @@ def main():
             print(f"  {status}: {n}")
         return
 
-    all_entries, disappeared_count = run_pipeline(
-        args.profile,
-        role=args.role,
-        source=args.source,
-        use_dspy=args.dspy,
-        dry_run=args.dry_run,
-        write_report=args.report or not args.json,
-    )
+    from wiki_store import WikiStore
+    from principal_runtime import resolve_principal_runtime
+
+    runtime = resolve_principal_runtime(args.profile)
+    wiki = WikiStore(root=runtime.wiki_root)
+    # WP1b box ①: a direct invocation takes the principal's writer lease so it
+    # cannot race a seal or another crawl; a child of an operation carries the
+    # marker and skips this. `--dry-run` uses temporary state and writes nothing,
+    # so it must not contend for the real principal's lease.
+    if args.dry_run:
+        guard = nullcontext()
+    else:
+        guard = standalone_writer_guard(
+            args.profile, mode="direct", state_root=runtime.cache_dir.parent,
+            run_id=args.run_id)
+    try:
+        with guard:
+            all_entries, disappeared_count = run_pipeline(
+                args.profile,
+                role=args.role,
+                source=args.source,
+                use_dspy=args.dspy,
+                dry_run=args.dry_run,
+                write_report=args.report or not args.json,
+                replay_archive=args.replay_archive,
+                wiki=wiki,
+                run_id=args.run_id,
+            )
+    except WriterBusy as busy:
+        print(f"[LOCK] writer busy: {busy.resource.key} — another operation holds "
+              f"this principal's lease (attempt recorded at {busy.attempt_path})")
+        raise SystemExit(75)
+    if wiki.last_report_path is not None:
+        # Machine-readable marker: the outer operation registers THIS file
+        # as its sealed original output — no "newest report by mtime".
+        print(f"[REPORT_PATH] {wiki.last_report_path}")
 
     role_label = args.role or "default"
     profile_label = f"{args.profile.upper()}-{role_label}"
@@ -109,6 +191,19 @@ def main():
         maybe = [e for e in all_entries if e.decision == "MAYBE"]
         new_jobs = [e for e in all_entries if e.lifecycle_status == "new"]
         long_lasting = [e for e in all_entries if e.lifecycle_status == "long_lasting"]
+        runtime = resolve_principal_runtime(args.profile)
+
+        def _dedupe(entries):
+            """One row per (org, title): the same advert via several sources
+            printed five times in the 2026-09-10 KJ email (WikiEntry has no
+            __eq__, so `not in` never filtered)."""
+            seen, out = set(), []
+            for e in sorted(entries, key=lambda x: x.score, reverse=True):
+                key = (e.org_name, e.title)
+                if key not in seen:
+                    seen.add(key)
+                    out.append(e)
+            return out
 
         print(f"\n{'='*60}")
         print(f"LoveWork Results — {profile_label}")
@@ -125,16 +220,12 @@ def main():
         if new_jobs:
             print(f"\n★ New GO/MAYBE listings:")
             for e in [j for j in new_jobs if j.decision in ("GO", "MAYBE")]:
-                print(f"  [{e.score:.1f}] {e.org_name} — {e.title}")
-                if e.url:
-                    print(f"        {e.url}")
-        if go:
+                _print_listing(e, runtime)
+        go_rest = [e for e in _dedupe(go) if (e.org_name, e.title) not in {(j.org_name, j.title) for j in new_jobs}]
+        if go_rest:
             print(f"\n★ GO listings:")
-            for e in sorted(go, key=lambda x: x.score, reverse=True):
-                if e not in new_jobs:  # Already shown above
-                    print(f"  [{e.score:.1f}] {e.org_name} — {e.title}")
-                if e.url:
-                    print(f"        {e.url}")
+            for e in go_rest:
+                _print_listing(e, runtime)
         pack_results = [
             getattr(entry, "case_pack_result") for entry in all_entries
             if getattr(entry, "case_pack_result", None) is not None
@@ -145,11 +236,11 @@ def main():
                 location = str(result.path) if result.path else "-"
                 print(f"  [{result.status}] {result.entry.org_name} — {result.entry.title}")
                 print(f"        {location} ({result.reason})")
-        if maybe:
+        maybe_rest = [e for e in _dedupe(maybe) if (e.org_name, e.title) not in {(j.org_name, j.title) for j in new_jobs}]
+        if maybe_rest:
             print(f"\n◆ MAYBE listings:")
-            for e in sorted(maybe, key=lambda x: x.score, reverse=True)[:10]:
-                if e not in new_jobs:
-                    print(f"  [{e.score:.1f}] {e.org_name} — {e.title}")
+            for e in maybe_rest[:MAYBE_LIST_MAX or None]:
+                _print_listing(e, runtime)
         if long_lasting:
             print(f"\n⚠ Long-lasting (suspicious):")
             for e in sorted(long_lasting, key=lambda x: x.score, reverse=True)[:5]:
@@ -157,7 +248,6 @@ def main():
         if args.dry_run:
             print("\nPreview only: no principal wiki or state was written.")
         else:
-            runtime = resolve_principal_runtime(args.profile)
             print(f"\nWiki: {runtime.wiki_root}")
 
 

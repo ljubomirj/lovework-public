@@ -1,0 +1,6 @@
+- name: agentic-engineer
+  url: https://advert.example.invalid/
+  reason: Manual Granite Analytics search for agentic engineer roles.
+- name: agentic-engineer-london-contract
+  url: https://advert.example.invalid/
+  reason: Manual Granite Analytics search for agentic engineer roles filtered to London/contract criteria.

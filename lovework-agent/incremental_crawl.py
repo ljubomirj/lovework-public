@@ -38,8 +38,9 @@ import config
 from principal_runtime import resolve_principal_runtime
 from history import scan_history
 from job_registry import JobRegistry
-from pipeline import run_pipeline
-from report_header import build_header
+from writer_boundary import WriterBusy, standalone_writer_guard  # noqa: E402
+from pipeline import run_pipeline, sources_for_profile
+from report_header import build_header, build_trailer
 from sources.neolabs import NeolabsSource
 from wiki_store import WikiEntry, WikiStore
 
@@ -48,29 +49,20 @@ from wiki_store import WikiEntry, WikiStore
 _TRACKER_CACHE: list[dict] = []
 
 
-def _render_entry_block(e: WikiEntry) -> list[str]:
+def _render_entry_block(e: WikiEntry, principal: str = "",
+                        store: WikiStore | None = None) -> list[str]:
     """Render one scored entry for the incremental report.
 
-    P1 — provenance is mandatory, absence is visible: the entry shows the
-    URL, the discovery (Found-via) line, or an explicit ``_not available_``
-    — it is never silently omitted (defect class: URL-less entries).
+    Uses the shared report block writer (`wiki_store.render_report_block`) —
+    the incremental report used to have its own shape, so the same advert read
+    differently in a full and an incremental report and only one of them
+    linked the org page (2026-10-07 audit).
     """
-    lines = [f"### {e.org_name} — {e.title}\n"]
-    lines.append(f"- **Score**: {e.score:.1f}/10 ({e.decision})")
-    if e.url:
-        lines.append(f"- **URL**: {e.url}")
-    if e.discovery_url:
-        date_suffix = f" ({e.discovery_date})" if e.discovery_date else ""
-        lines.append(f"- **Found via**: [{e.source}]({e.discovery_url}){date_suffix}")
-    if not e.url and not e.discovery_url:
-        lines.append("- **URL**: _not available_")
-    if e.location:
-        lines.append(f"- **Location**: {e.location}")
-    lines.append(f"- **Reasoning**: {e.reasoning}")
-    if e.lifecycle_status:
-        lines.append(f"- **Lifecycle**: {e.lifecycle_status}")
-    lines.append("")
-    return lines
+    from wiki_store import render_report_block
+
+    principal = principal or (store.principal if store else "lj")
+    org_stem = store._org_stem(e.org_name) if store is not None else None
+    return render_report_block(e, principal, show_age=True, org_stem=org_stem)
 
 
 def _normalise_name(name: str) -> str:
@@ -105,7 +97,35 @@ def _names_match(a: str, b: str) -> bool:
     return a_n in b_n or b_n in a_n
 
 
+def _profile_from_argv(argv: list[str]) -> str:
+    """The principal named on the command line (`--profile X` / `--profile=X`)."""
+    for i, arg in enumerate(argv):
+        if arg == "--profile" and i + 1 < len(argv):
+            return argv[i + 1]
+        if arg.startswith("--profile="):
+            return arg.split("=", 1)[1]
+    return "lj"
+
+
 def main():
+    """Direct invocation: hold the principal's writer lease, then crawl.
+
+    WP1b box ① — a direct run must not race a seal or another crawl. A child of
+    an operation carries the marker and skips the acquire (its parent holds it).
+    """
+    principal = _profile_from_argv(sys.argv[1:])
+    state_root = resolve_principal_runtime(principal).cache_dir.parent
+    try:
+        with standalone_writer_guard(principal, mode="direct", state_root=state_root):
+            return _crawl_main()
+    except WriterBusy as busy:
+        logger.error(
+            "[LOCK] writer busy: %s — another operation holds this principal's "
+            "lease (attempt recorded at %s)", busy.resource.key, busy.attempt_path)
+        raise SystemExit(75)
+
+
+def _crawl_main():
     parser = argparse.ArgumentParser(description="Run a principal-scoped incremental LoveWork crawl")
     parser.add_argument("--profile", default="lj", choices=("lj", "vj", "kj", "pk"))
     parser.add_argument("--role", default=None)
@@ -134,7 +154,10 @@ def main():
     # skipped for VJ's statistics/pricing/actuarial search.
     neolab_entries = []
     disappeared = 0
-    if profile_name != "vj":
+    # The tracker sources are policy-driven: a principal that delegates a
+    # source to another principal's crawl does not run it here either.
+    crawl_neolabs = "neolabs" in sources_for_profile(profile_name, runtime)
+    if crawl_neolabs:
         neolab_entries, disappeared = run_pipeline(
             profile_name=profile_name,
             role=role,
@@ -198,18 +221,13 @@ def main():
             continue
         if not prior.has_application and not prior.gmail_events:
             continue
-        block = (
-            f"### {date_str} — prior contact found\n\n"
-            f"- **Source entry**: {e.title} ({e.score:.1f}/10) — {e.url or 'no url'}\n"
-            f"- **Prior contact**: {prior.summary()}\n"
+        # A note, not a finding — see crosscheck.py for the class.
+        wiki.update_org_note(
+            e.org_name, "prior-contact cross-check", source="cross_check",
+            day=date_str, title="prior contact found", url=e.url or "",
+            fields={"Source entry": f"{e.title} ({e.score:.1f}/10) — {e.url or 'no url'}",
+                    "Prior contact": prior.summary()},
         )
-        # Append to the org's wiki page (wiki_store.update_org_page is
-        # append-only by design).
-        wiki.update_org_page(WikiEntry(
-            org_name=e.org_name, title="(prior-contact cross-check)",
-            url=None, location=None, score=0.0, decision="",
-            reasoning=block, source="cross_check",
-        ))
         cross_check_log.append({
             "org": e.org_name,
             "title": e.title,
@@ -224,7 +242,7 @@ def main():
     time_suffix = datetime.now().strftime("%H%M%S")
     report_path = runtime.wiki_root / "reports" / f"{date_str}-{time_suffix}-{profile_name}-incremental.md"
     sources_run = ["hn_hiring", "hn_jobs"]
-    if profile_name != "vj":
+    if crawl_neolabs:
         sources_run.insert(0, "neolabs")
     if gmail_source:
         sources_run.insert(1, gmail_source)
@@ -247,7 +265,7 @@ def main():
         "",
     ]
     report_sections = []
-    if profile_name != "vj":
+    if crawl_neolabs:
         report_sections.append(("neolabs", neolab_entries))
     report_sections.extend(((gmail_source or "gmail", gmail_entries),
                             ("hn_hiring", hn_entries),
@@ -259,7 +277,7 @@ def main():
         for e in sorted(entries, key=lambda x: x.score, reverse=True):
             if e.decision not in ("GO", "MAYBE"):
                 continue
-            report_lines.extend(_render_entry_block(e))
+            report_lines.extend(_render_entry_block(e, store=wiki))
 
     from application_packs import render_pack_report_section
 
@@ -277,6 +295,7 @@ def main():
             report_lines.append(f"- {x['summary']}")
             report_lines.append("")
 
+    report_lines.extend(build_trailer())
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
     logger.info(f"Report written to {report_path}")
 
@@ -286,7 +305,7 @@ def main():
     print("=" * 70)
     print(f"Sources: {', '.join(sources_run)}")
     print(f"Total entries:    {len(all_run_entries)}")
-    if profile_name != "vj":
+    if crawl_neolabs:
         print(f"  neolabs:        {len(neolab_entries)}")
     print(f"  gmail:          {len(gmail_entries)}")
     print(f"  hn_hiring:      {len(hn_entries)}")
@@ -300,6 +319,9 @@ def main():
             print(f"  - {x['org']}: {x['summary']}")
     print()
     print(f"Report: {report_path}")
+    # Machine-readable marker for the outer operation (crawl_operation.py):
+    # register THIS file as the sealed original output.
+    print(f"[REPORT_PATH] {report_path}")
 
 
 if __name__ == "__main__":

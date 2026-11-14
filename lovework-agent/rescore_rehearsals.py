@@ -22,12 +22,13 @@ trustworthy verdicts.
 Usage::
 
     ../venv/bin/python3 rescore_rehearsals.py \\
-        --case ../state/lj/applications/20260723-Hyperspell-Product_Engineer-LoveWork-ATA/ \\
+        --case ../state/example/applications/20260723-Hyperspell-Product_Engineer-LoveWork-ATA/ \\
         [--rehearsal-dir NAME]  # limit to one (default: all)
 
 """
 
 from __future__ import annotations
+import jsonl_io
 
 import argparse
 import json
@@ -66,7 +67,7 @@ def _extract_candidate_responses(transcript_path: Path) -> list[dict[str, Any]]:
     """
     pairs: list[dict[str, Any]] = []
     last_interviewer_msg = ""
-    for line in transcript_path.read_text(encoding="utf-8").splitlines():
+    for line in jsonl_io.lines(transcript_path):
         line = line.strip()
         if not line:
             continue

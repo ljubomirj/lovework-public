@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List
 
 import config
-from crawler import SmartCrawler
+from crawler import SmartCrawler, job_evidence_text
 from job_registry import JobRegistry
 from matcher import JobMatcher
 from wiki_store import WikiEntry, match_fields
@@ -22,6 +22,14 @@ TRACKER_DIR = config.HF_TRACKER_DIR
 
 
 class HFStartupsSource:
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = False
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
     """Crawls AI-for-Hedge-Fund startups from the local tracker."""
 
     name = "hf_startups"
@@ -129,18 +137,13 @@ class HFStartupsSource:
                                 source=self.name,
                             )
                         except Exception as e:
-                            logger.debug(f"Registry upsert failed: {e}")
+                            # A swallowed upsert is data loss, and the exception type is
+                            # what separates contract drift from a transient failure
+                            # (LEARNINGS 2026-09-20).
+                            logger.warning(f"Registry upsert failed "
+                                           f"({type(e).__name__}): {e}")
 
-                    desc = " ".join(
-                        filter(
-                            None,
-                            [
-                                job.description_snippet,
-                                job.requirements_snippet,
-                                job.employment_type,
-                            ],
-                        )
-                    )
+                    desc = job_evidence_text(job)
                     match = self.matcher.match(
                         job.title, desc, org_name, job_url=job.url or "",
                         location=job.location or "",

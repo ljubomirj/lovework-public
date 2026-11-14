@@ -19,21 +19,26 @@ Sections:
 
 Run with:
     python3 dashboard_server.py [--port 8765]
+    python3 dashboard_server.py --host 0.0.0.0 --token "$LOVEWORK_DASHBOARD_TOKEN"
+    python3 dashboard_server.py --host 0.0.0.0 --no-auth   # internal trial, home LAN
 """
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import logging
+import mimetypes
 import os
-from hermes_context import resolve_hermes_home, profile_name
+from hermes_context import hermes_home_or_none, profile_name
+import ipaddress
 import re
 import sys
 import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import doc_serve
 
@@ -87,49 +92,53 @@ _DASHBOARD_CSS = """<style>
 
 
 def _safe_org_name(name: str) -> str:
-    """Sanitize an org name to match wiki_store._safe_filename.
+    """The wiki's own filename rule — one authority, not a copy of it.
+
+    This used to carry a duplicate of `wiki_store._safe_filename`, which then
+    drifted: when the wiki learned to transliterate, the copy kept folding
+    non-ASCII to `_`, so the dashboard linked `_m_Labs.md` and `B_rse.md` where
+    the pages are `Zum_Labs.md` and `Borse.md` — every accented org page link
+    broken, silently.
 
     "Jack & Jill" → "Jack_Jill"
     "Isomorphic Labs" → "Isomorphic_Labs"
-    "Zūm Labs" → "_m_Labs" (non-ASCII folded)
+    "Zūm Labs" → "Zum_Labs"
     """
-    n = name or "x"
-    n = n.encode("ascii", errors="replace").decode("ascii")
-    n = n.replace("?", "_")
-    n = _re.sub(r"[^A-Za-z0-9._-]+", "_", n)
-    n = _re.sub(r"_+", "_", n)
-    n = n.strip("._-") or "x"
-    return n[:200]
+    from wiki_store import WikiStore
+    return WikiStore._safe_filename(name or "x")
 
 
 # ── Configuration ────────────────────────────────────────────────────────
 def _resolve_lovework_root() -> Path:
     """Resolve the lovework repo root.
 
-    Honor an explicit LOVEWORK_ROOT env var first; otherwise probe principal
-    locations, preferring the location-agnostic ~/LJ-work-2026/ (works on all
-    hosts), then the legacy ~/Documents/ (macbook2) and /opt/ljubomir/ (gigul2).
+    Honor an explicit LOVEWORK_ROOT env var first; otherwise probe the
+    engine checkout inside the workspace (host-b, host-a dev and host-a
+    production).
     """
     env = os.environ.get("LOVEWORK_ROOT")
     if env:
         return Path(env)
     for cand in (
-        Path.home() / "LJ-work-2026" / "lovework",
-        Path.home() / "Documents" / "LJ-work-2026" / "lovework",
-        Path("/opt/ljubomir/LJ-work-2026/lovework"),
+        # This module lives at <engine>/lovework-agent/, so the root is its
+        # own parent — the candidate that survives the tree being moved.
+        Path(__file__).resolve().parent.parent,
+        Path.home() / "lovework" / "lovework-engine",
+        Path("/srv/lovework/lovework-engine"),
+        Path("/srv/lovework-dev/lovework-engine"),
     ):
         if (cand / "lovework-agent").is_dir():
             return cand
-    # Last-resort fallback so the import never hard-fails; use the canonical path.
-    return Path.home() / "LJ-work-2026" / "lovework"
+    # Last-resort fallback so the import never hard-fails.
+    return Path(__file__).resolve().parent.parent
 
 
 LOVEWORK_ROOT = _resolve_lovework_root()
 LOVEWORK_DOCS_ROOT = LOVEWORK_ROOT  # docs/, profiles/, MANUAL.md etc.
 
-HERMES_HOME = resolve_hermes_home()
+HERMES_HOME = hermes_home_or_none()      # None post-severance (A5)
 
-STATE_DIR = LOVEWORK_ROOT / "state"
+STATE_DIR = Path(os.getenv("LOVEWORK_STATE_DIR") or (LOVEWORK_ROOT / "state"))
 WIKI = LOVEWORK_ROOT / "lovework-agent" / "wiki"
 REPORTS = WIKI / "reports"
 ORGS = WIKI / "orgs"
@@ -143,24 +152,68 @@ CACHE_DIR = LOVEWORK_ROOT / "lovework-agent" / "cache"
 # Caches, downloaded source pages, Gmail-derived data, profiles, and datasets
 # remain local-only.  The three subtrees below are operator-facing artefacts:
 # generated findings, wrapper logs, and compact run/incident records.
+# Deliberately narrow: the operator-facing artefacts only. `cache` itself is
+# NOT here — publishing it served the whole cache tree (the registry, downloaded
+# source pages, enrichment, assessment caches), which contradicts this boundary
+# and the note above. The two subtrees under it that *are* operator-facing are
+# listed explicitly instead. `runs` and `incidents` are the only cache children
+# the dashboard links to.
 PUBLISHED_PRINCIPAL_AREAS = {
     "wiki": "wiki",
     "logs": "logs",
     "runs": "cache/runs",
     "incidents": "cache/incidents",
+    # The fetch cache, so a report's "Cached advert" line can be opened. It is
+    # NOT a directory publication: `cache/` also holds jobs.csv, the ledgers,
+    # enrichment and downloaded source pages, so the area is narrowed by name
+    # below (`AREA_FILE_ALLOW`) to the advert pages alone.
     "cache": "cache",
+    # The case directories, so a GO's application pack is openable from the wiki
+    # (LJ, 2026-10-09: "when applying, the principal should not start from Zero").
+    # A pack is `application_pack.md` plus its dossier and tailored material, and
+    # the markdown is rendered to HTML like the wiki. Note the boundary this does
+    # NOT cross: LJ's *manual* cases are symlinks out of the state tree, and the
+    # serving layer refuses a path that resolves outside its root — so they stay
+    # 404 while the LoveWork packs are served.
+    "applications": "applications",
+    # …and the lead pages: every judgement (MAYBE, FLAG, DROP) keeps its evidence
+    # in `state/<p>/leads/`, so the wiki's MAYBE listings can lead with it (LJ,
+    # 2026-10-09: "all this should be in the Wiki, should not be forgotten").
+    "leads": "leads",
+    # The two closing piles (LJ's design, docs/45, built 2026-10-14): `gone/`
+    # holds packs that were a GO and are now closed (the material is the value),
+    # `expired/` holds judged adverts that closed. Both stay browsable at their
+    # new path, and the old path carries a relative tombstone link.
+    "gone": "gone",
+    "expired": "expired",
+    # The loop's own residue: `state/<p>/loop/drafts/` is what the tick wrote
+    # and `receipts.jsonl` is what it claims it did. Without this area the
+    # loop's product was invisible — a draft with no reader is work nobody can
+    # use, and the receipt is the only record of what ran (docs/43 §7).
+    "loop": "loop",
+}
+
+#: For an area that is a whole directory, the filenames that may be served.
+#: Anything not matched is 404 — including a directory request, so no listing
+#: of the cache is ever rendered. `page_<sha256(url)[:16]>.md` is the fetch
+#: cache's own naming (`crawler._cache_path`), never a guess about content.
+AREA_FILE_ALLOW: dict[str, re.Pattern] = {
+    "cache": re.compile(r"^page_[0-9a-f]{16}\.md$"),
 }
 
 
 def principal_names() -> list[str]:
-    """Return only simple, existing principal state directories."""
-    if not STATE_DIR.is_dir():
-        return []
-    return sorted(
-        entry.name
-        for entry in STATE_DIR.iterdir()
-        if entry.is_dir() and re.fullmatch(r"[a-z][a-z0-9_-]*", entry.name)
-    )
+    """The principals with state on this host — `config.principal_names`, one authority.
+
+    This used to accept any directory whose *name* looked like a principal's, so
+    `state/idx/` (the AS1 situation cache) was listed as a fifth principal, **IDX**,
+    with four links that 404 (LJ, 2026-10-15: *"Remove the IDX"*). A name shape is
+    not a principal; a principal's directory holds a principal's material.
+    """
+    import config  # local: the dashboard sets its own STATE_DIR and must not
+                   # depend on config's import order
+
+    return config.principal_names(STATE_DIR)
 
 
 def principal_area_root(principal: str, area: str) -> Path | None:
@@ -184,7 +237,7 @@ def _find_jobs_db() -> Path:
 
 JOBS_DB = _find_jobs_db()
 JOBS_CSV = CACHE_DIR / "jobs.csv"
-CONFIG = HERMES_HOME / "config.yaml"
+CONFIG = (HERMES_HOME / "config.yaml") if HERMES_HOME is not None else None
 
 # ── Data fetchers ────────────────────────────────────────────────────────
 def fetch_registry_stats() -> dict:
@@ -439,14 +492,25 @@ def _app_dir_sort_key(p) -> tuple:
 
 
 def fetch_applications() -> dict:
-    """Count + recent entries of LJ's application directories."""
-    apps_dir = LOVEWORK_ROOT / "applications"
-    if not apps_dir.exists():
-        return {"count": 0}
+    """Count + recent entries of the configured application corpus.
+
+    Uses `config.APPLICATIONS_DIR` — the one authority every other reader
+    (`history.scan_applications`, `cli_views`, the matchers) already uses. It
+    used to read `LOVEWORK_ROOT / "applications"`, a path that only existed
+    while a `<runtime-root>/applications` symlink pointed at LJ's manual corpus;
+    when that symlink was dropped (2026-10-27) the dashboard silently showed
+    zero cases while the rest of the engine still saw them.
+    """
+    import config  # local, same reason as principal_names(): one path authority
+
+    apps_dir = config.APPLICATIONS_DIR
+    if not apps_dir.is_dir():
+        return {"count": 0, "available": False, "path": str(apps_dir)}
     entries = sorted([p for p in apps_dir.iterdir() if p.is_dir()],
                      key=_app_dir_sort_key, reverse=True)
     return {
         "count": len(entries),
+        "available": True,
         "path": str(apps_dir),
         "recent": [p.name for p in entries[:10]],
     }
@@ -512,8 +576,44 @@ def fetch_principal_workspaces() -> list[dict]:
     return workspaces
 
 
+def _crontab_jobs() -> list[dict]:
+    """Job rows from scripts/cron/crontab.in (the post-severance schedule)."""
+    path = LOVEWORK_ROOT / "scripts" / "cron" / "crontab.in"
+    rows: list[dict] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" in line.split()[0]:
+            continue
+        parts = line.split()
+        if len(parts) < 6:
+            continue
+        schedule = " ".join(parts[:5])
+        command = " ".join(parts[5:]).split(">>")[0].strip()
+        name = Path(command.split()[0]).name.removesuffix(".sh")
+        args = command.split()[1:]
+        # The row's identity is the launcher + its principal. Other arguments
+        # (the tick's `--run-minutes` budget) are schedule detail, not a second
+        # principal: `lovework-tick.sh lj 8` is the lj tick, not "lj-8".
+        principal = args[0] if args and args[0] in ("lj", "vj", "kj", "pk", "all") else None
+        rows.append({"name": name + (f"-{principal}" if principal else ""),
+                     "schedule": schedule, "enabled": True,
+                     "type": "script", "command": command})
+    return rows
+
+
 def fetch_cron_jobs() -> list[dict]:
-    """Hermes cron schedule for the active profile."""
+    """The schedule: Hermes cron while it exists, else the checked-in crontab.
+
+    Post-severance (A2/A3) the store of truth is `scripts/cron/crontab.in`;
+    each lovework line is shown as a job row with the same keys the Hermes
+    rows carried, so the dashboard card needs no second renderer.
+    """
+    if HERMES_HOME is None:
+        return _crontab_jobs()
     jobs_path = HERMES_HOME / "cron" / "jobs.json"
     if not jobs_path.exists():
         # Try parent
@@ -605,12 +705,19 @@ def fetch_system() -> dict:
             out["platforms"] = {k: v.get("state") for k, v in gs.get("platforms", {}).items()}
         except Exception as e:
             out["gateway_error"] = str(e)
-    # PID check
+    # PID check. A process listing is a convenience, not the page: under a
+    # sandbox (or a minimal container) `ps` answers EPERM, and an unguarded call
+    # took the whole dashboard down with "Error rendering dashboard" (2026-11-07).
+    # No answer is "unknown", never a crash and never a confident False.
     import subprocess
-    r = subprocess.run(["ps", "aux"], capture_output=True, text=True)
-    out["hermes_gateway_running"] = bool(
-        "hermes_cli.main gateway" in r.stdout
-    )
+    out["hermes_gateway_running"] = None
+    try:
+        r = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=10)
+        out["hermes_gateway_running"] = "hermes_cli.main gateway" in r.stdout
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Not a silent swallow: the reason travels with the data, and the page
+        # says "unknown" rather than guessing.
+        out["ps_error"] = str(exc)[:200]
     return out
 
 
@@ -835,7 +942,8 @@ def _fmt_section_applications(apps: dict) -> str:
 
 def _fmt_section_system(s: dict) -> str:
     gw_state = s.get("gateway_state", "?")
-    gw_running = s.get("hermes_gateway_running", False)
+    gw_running = s.get("hermes_gateway_running")
+    gw_running = "unknown" if gw_running is None else gw_running
     platforms = s.get("platforms", {})
     plat_str = ", ".join(f"{k}={v}" for k, v in platforms.items()) or "—"
     return f"""<p><b>LoveWork root:</b> <code><a href='/README.md'>{s.get('lovework_root')}</a></code></p>
@@ -845,6 +953,27 @@ def _fmt_section_system(s: dict) -> str:
 <p><b>Config:</b> <code>{s.get('config_path')}</code></p>
 <p><b>Gateway state:</b> {gw_state} (running={gw_running})</p>
 <p><b>Platforms:</b> {plat_str}</p>"""
+
+
+#: The two directories an organisation page may live in — the kind a page records
+#: decides which (LJ asked for the separation, 2026-10-15).
+ORG_DIRS = ("orgs", "agencies")
+
+
+def _sibling_org_path(root: Path, relative: str) -> str | None:
+    """The same page in the other directory, when it moved between them.
+
+    `orgs/X.md` → `agencies/X.md` and back. The area, the principal and the
+    publication boundary are unchanged — only the directory differs — so this cannot
+    widen what is served.
+    """
+    head, _, tail = relative.partition("/")
+    if head not in ORG_DIRS or not tail:
+        return None
+    other = ORG_DIRS[0] if head == ORG_DIRS[1] else ORG_DIRS[1]
+    if (root / other / tail).is_file():
+        return f"{other}/{tail}"
+    return None
 
 
 def _serve_principal_public_path(path: str, query: str) -> dict | None:
@@ -861,12 +990,118 @@ def _serve_principal_public_path(path: str, query: str) -> dict | None:
     if root is None:
         return None
     relative = "/".join(parts[3:]) or "/"
-    return doc_serve.try_serve_path(relative, query, root, request_path=path)
+    allow = AREA_FILE_ALLOW.get(area)
+    if allow is not None:
+        name = relative.rstrip("/")
+        if "/" in name or not allow.match(name):
+            return None          # not an advert page: 404, and no listing
+
+    # An **old path** may now live in another area of the *same* principal: the
+    # closing piles move a directory into `gone/` or `expired/` and record the move
+    # (docs/45), so a wiki GO row or a lead page written before the retirement must
+    # still answer. The boundary is unchanged — only a published area of this same
+    # principal is reachable, and the map is the only way out of this area.
+    resolved_root = root
+    if not (root / relative).exists():
+        try:
+            import retire
+
+            moves = retire.move_map(STATE_DIR / principal)
+        except Exception:
+            moves = {}
+        # The map records *directories*, and a request names a file inside one:
+        # walk up the path until a move matches, then keep the tail
+        # (`<pack>/application_pack.md` → the pack moved → the file moved with it).
+        moved, remainder = None, ""
+        pieces = [p for p in relative.split("/") if p]
+        for cut in range(len(pieces), 0, -1):
+            found = moves.get(f"{area}/" + "/".join(pieces[:cut]))
+            if found:
+                moved, remainder = found, "/".join(pieces[cut:])
+                break
+        if not moved:
+            sibling = _sibling_org_path(root, relative)
+            if sibling is not None:
+                # The page changed directory, not identity: a link written before
+                # the separation still answers (2026-10-15).
+                return doc_serve.try_serve_path(sibling, query, root,
+                                                request_path=path)
+            return doc_serve.try_serve_path(relative, query, root, request_path=path)
+        for other_area, other_rel in PUBLISHED_PRINCIPAL_AREAS.items():
+            if moved == other_rel or moved.startswith(other_rel + "/"):
+                tail = moved[len(other_rel):].lstrip("/")
+                relative = "/".join(p for p in (tail, remainder) if p)
+                resolved_root = STATE_DIR / principal / other_rel
+                break
+        else:
+            return None          # moved outside every published area: 404 by design
+    return doc_serve.try_serve_path(relative, query, resolved_root, request_path=path)
+
+
+# ── The documentation site (docs/html) ────────────────────────────────────
+#
+# docs/html is the docsify site root: one index.html plus a farm of *relative*
+# symlinks — chapter files as `../X.md`, repo-root files as `../../X`. The farm is
+# what keeps the site location-independent, and it is also why this subtree is
+# served as plain static files with a *resolved-path* allow-list, not through the
+# server-rendered markdown used for /docs/*.md:
+#   * docsify fetches `<route>.md` and needs the raw markdown, not rendered HTML;
+#   * two of the farm's links reach material that must never be LAN-published —
+#     README.LJ (LJ's turn log) and profiles/<principal>/.
+DOCS_SITE_REL = "docs/html"
+DOCS_DENY_TOP = {"README.LJ", "state", "applications", "credentials", "logBook"}
+DOCS_DENY_PREFIXES = (".", "~")
+
+
+def _docs_path_allowed(fs_path: Path) -> bool:
+    """Publish a docs-site file only when its *resolved* location is publishable.
+
+    Resolution is the point: the farm's symlinks and any `..` segments are
+    collapsed first, so `/docs/html/README.LJ` and
+    `/docs/html/profiles/example/soul.md` cannot smuggle private material out.
+    """
+    try:
+        rel = fs_path.resolve().relative_to(LOVEWORK_DOCS_ROOT.resolve())
+    except (OSError, ValueError):
+        return False
+    parts = rel.parts
+    if not parts or parts[0] in DOCS_DENY_TOP or parts[0].startswith(DOCS_DENY_PREFIXES):
+        return False
+    if parts[0] == "profiles" and not (len(parts) > 1 and parts[1] == "example"):
+        return False
+    return True
+
+
+def _serve_docs_site(rel: str) -> dict | None:
+    """Serve the docsify site root as raw static files (mime by extension)."""
+    fs_path = doc_serve._resolve_scoped_path(LOVEWORK_DOCS_ROOT, rel)
+    if fs_path is None:
+        return None
+    if fs_path.is_dir():
+        fs_path = fs_path / "index.html"
+    if not fs_path.is_file() or not _docs_path_allowed(fs_path):
+        return None
+    try:
+        data = fs_path.read_bytes()
+    except OSError:
+        return None
+    ctype, _ = mimetypes.guess_type(str(fs_path))
+    if fs_path.suffix == ".md":
+        ctype = "text/plain; charset=utf-8"          # docsify parses it as text
+    elif ctype is None:
+        ctype = "application/octet-stream"
+    return {"data": data, "mime": ctype}
 
 
 def _serve_general_public_path(path: str, query: str) -> dict | None:
     """Serve the small, intentionally public documentation surface."""
     rel = path.strip("/")
+    if rel == DOCS_SITE_REL or rel.startswith(DOCS_SITE_REL + "/"):
+        return _serve_docs_site(rel)
+    # MANUAL.md is written into the state dir (2026-11-03) — serve it from there so
+    # there is exactly one write target and the code checkout stays clean.
+    if rel == "MANUAL.md":
+        return doc_serve.try_serve_path(path, query, STATE_DIR)
     allowed_top_level = {"README.md", "MANUAL.md", "LICENSE"}
     allowed_prefixes = ("docs", "lovework-agent/wiki")
     if rel in allowed_top_level or any(rel == prefix or rel.startswith(prefix + "/") for prefix in allowed_prefixes):
@@ -1047,7 +1282,7 @@ def render_html() -> str:
   <a href="/dashboard/">Dashboard</a>
   <a href="/principals/lj/wiki/reports/">LJ results</a>
   <a href="/principals/vj/wiki/reports/">VJ results</a>
-  <a href="/docs/00-index.md">📖 Docs</a>
+  <a href="/docs/">📖 Docs</a>
   <a href="/MANUAL.md">📋 Manual</a>
   <a href="/README.md">ℹ️ About</a>
   <a href="/docs/10-ecosystem-survey.md">🔍 Survey</a>
@@ -1163,6 +1398,7 @@ def render_lan_index() -> str:
   <h2>Operations</h2>
   <p class="links">
     <a href="/dashboard/">Live dashboard</a>
+    <a href="/usage/">Model usage — tokens per provider and model</a>
     <a href="/health">Health</a>
     <a href="/api/registry">Registry API</a>
     <a href="/api/progress">Live-progress API</a>
@@ -1172,7 +1408,8 @@ def render_lan_index() -> str:
   <p class="links">
     <a href="/README.md">About LoveWork</a>
     <a href="/MANUAL.md">LJ operator manual</a>
-    <a href="/docs/00-index.md">Documentation index</a>
+    <a href="/docs/">Documentation — all chapters</a>
+    <a href="/docs/00-index.md">Documentation index page</a>
     <a href="/docs/02-architecture.md">Architecture</a>
     <a href="/docs/09-intelligence-layer.md">Intelligence layer</a>
   </p>
@@ -1184,10 +1421,167 @@ def render_lan_index() -> str:
 </html>"""
 
 
+# ── Authentication ───────────────────────────────────────────────────────
+#
+# The dashboard (and its MCP face on the same process) reads every
+# principal's wiki, reports and logs, and MCP exposes run_python, so the
+# server is loopback-only by default and requires a shared token whenever it
+# is bound wider. Token sources, in order:
+#   1. Authorization: Bearer <token>   — API / MCP clients
+#   2. ?token=<token>                  — curl convenience and the first
+#                                        browser load; also sets the cookie
+#   3. Cookie lovework_token=<token>   — all later browser requests
+# The token is never logged and never echoed back in any response body.
+#
+# --no-auth (or LOVEWORK_DASHBOARD_NO_AUTH=1) disables authentication for the
+# process. It is the explicit operator consent that bypasses the non-loopback
+# refusal below, for the internal R&D trial on LJ's trusted home LAN
+# (lj, pk, vj, kj). It is logged as a warning at startup and must not be used
+# for any host reachable beyond that LAN.
+
+AUTH_COOKIE_NAME = "lovework_token"
+AUTH_TOKEN: str | None = None
+
+# Redacts ?token=... from the request line before it reaches the log.
+_TOKEN_IN_QUERY = re.compile(r"(?i)([?&]token=)[^&\s\"']+")
+
+
+def configure_auth(token: str | None) -> None:
+    """Set the process-wide dashboard token. Empty/None disables auth."""
+    global AUTH_TOKEN
+    AUTH_TOKEN = token or None
+
+
+def resolve_token(cli_value: str | None = None) -> str | None:
+    """Resolve the token: --token first, then LOVEWORK_DASHBOARD_TOKEN."""
+    return cli_value or os.environ.get("LOVEWORK_DASHBOARD_TOKEN") or None
+
+
+NO_AUTH_ENV = "LOVEWORK_DASHBOARD_NO_AUTH"
+_NO_AUTH_TRUE = {"1", "true", "yes", "on"}
+
+
+def resolve_no_auth(cli_value: bool | None = None) -> bool:
+    """True when authentication is deliberately disabled for this process.
+
+    Sources: ``--no-auth``, or ``LOVEWORK_DASHBOARD_NO_AUTH=1``. This flag is
+    the explicit operator consent that lets a non-loopback bind run without a
+    token (see ``bind_policy_error``); it is not a default and not a fallback.
+    """
+    if cli_value:
+        return True
+    return (os.environ.get(NO_AUTH_ENV) or "").strip().lower() in _NO_AUTH_TRUE
+
+
+def is_loopback_host(host: str) -> bool:
+    """True only for bind hosts that stay on this machine.
+
+    Anything else -- 0.0.0.0, ::, a LAN address, a DNS name -- is treated as
+    network-reachable, including the empty string (which would bind wide).
+    """
+    h = (host or "").strip().strip("[]").lower()
+    if h == "localhost":
+        return True
+    if not h:
+        return False
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def bind_policy_error(host: str, token: str | None, no_auth: bool = False) -> str | None:
+    """Return a refusal message when the bind config is unsafe, else None.
+
+    A non-loopback bind without a token would expose every principal's wiki,
+    reports, logs and the MCP server (including its run_python tool) to the
+    whole network, unauthenticated. Refuse to start; never warn and continue.
+
+    ``no_auth=True`` (the explicit ``--no-auth`` / LOVEWORK_DASHBOARD_NO_AUTH
+    opt-out) is the one deliberate exception: the operator has consented to an
+    unauthenticated process, so the refusal is bypassed -- loudly, at startup.
+    """
+    if no_auth:
+        return None
+    if token or is_loopback_host(host):
+        return None
+    return (
+        f"refusing to start: --host {host!r} is not loopback and no dashboard\n"
+        "token is configured. Every principal's wiki, reports, logs and the MCP\n"
+        "server (including its run_python tool) would be exposed to the network\n"
+        "without authentication. Fix with one of:\n"
+        "  --host 127.0.0.1                 # loopback only (local access)\n"
+        "  --token <secret>                 # or LOVEWORK_DASHBOARD_TOKEN in the environment\n"
+        "LAN form: --host 0.0.0.0 --token <secret>\n"
+        "Internal-trial LAN form (no auth, trusted home LAN only):\n"
+        "  --host 0.0.0.0 --no-auth         # or LOVEWORK_DASHBOARD_NO_AUTH=1\n"
+    )
+
+
 # ── HTTP handler ──────────────────────────────────────────────────────────
 class DashboardHandler(BaseHTTPRequestHandler):
+    # Headers queued for the next end_headers() call (e.g. Set-Cookie).
+    _extra_headers: list[tuple[str, str]] | None = None
+
+    def _queue_header(self, key: str, value: str) -> None:
+        if getattr(self, "_extra_headers", None) is None:
+            self._extra_headers = []
+        self._extra_headers.append((key, value))
+
+    def end_headers(self) -> None:
+        for key, value in getattr(self, "_extra_headers", None) or []:
+            self.send_header(key, value)
+        self._extra_headers = None
+        super().end_headers()
+
+    def _supplied_token(self, parsed) -> tuple[str | None, bool]:
+        """Return (token, came_from_query) for this request, or (None, False)."""
+        header = self.headers.get("Authorization", "")
+        if header[:7].lower() == "bearer ":
+            return header[7:].strip() or None, False
+        query = parse_qs(parsed.query)
+        if query.get("token"):
+            return query["token"][0], True
+        cookie = self.headers.get("Cookie", "")
+        for chunk in cookie.split(";"):
+            name, _, value = chunk.strip().partition("=")
+            if name == AUTH_COOKIE_NAME and value:
+                return unquote(value), False
+        return None, False
+
+    def _require_auth(self, parsed) -> bool:
+        """True when the request may proceed; otherwise send 401 and return False."""
+        expected = AUTH_TOKEN
+        if not expected:
+            return True
+        supplied, from_query = self._supplied_token(parsed)
+        if supplied is not None and hmac.compare_digest(supplied, expected):
+            if from_query:
+                # First browser load: remember the token so it can leave the URL.
+                self._queue_header(
+                    "Set-Cookie",
+                    f"{AUTH_COOKIE_NAME}={quote(expected)}; Path=/; HttpOnly; SameSite=Lax",
+                )
+            return True
+        body = (
+            "401 Unauthorized — LoveWork dashboard requires a token.\n\n"
+            "Browser: open http://<host>:<port>/?token=<token> once; the cookie\n"
+            "         then carries the session.\n"
+            "API/MCP: send 'Authorization: Bearer <token>' (or ?token=<token>).\n"
+        ).encode("utf-8")
+        self.send_response(401)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("WWW-Authenticate", 'Bearer realm="lovework"')
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
+
     def do_GET(self):
         parsed = urlparse(self.path)
+        if not self._require_auth(parsed):
+            return
         path = parsed.path
         query = parsed.query
         if path == "/" or path == "/index.html":
@@ -1210,6 +1604,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(html.encode("utf-8"))
             except Exception as e:
                 self.wfile.write(f"<h1>Error rendering dashboard</h1><pre>{e}</pre>".encode("utf-8"))
+        elif path in ("/usage", "/usage/"):
+            # LJ, 2026-10-13: "We started collecting tracking the tokens stats
+            # per provider/model (including local). Can we see some stats about
+            # that on the C&C web page?" — a read over the ledgers that already
+            # exist (`usage_stats.py`), never a second ledger.
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            try:
+                import usage_stats
+
+                params = parse_qs(query)
+                days = int((params.get("days") or ["7"])[0])
+                by_day = (params.get("by_day") or ["0"])[0] not in ("0", "", "no")
+                html = usage_stats.render_html(
+                    usage_stats.aggregate(days=days), by_day=by_day)
+                self.wfile.write(html.encode("utf-8"))
+            except Exception as e:
+                self.wfile.write(f"<h1>Error rendering usage</h1><pre>{e}</pre>".encode("utf-8"))
         elif path == "/health":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -1228,6 +1642,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         else:
             # /principals/ is canonical. Keep old local bookmarks alive while
             # making the principal→agent vocabulary visible in every new URL.
+            if path in ("/docs", "/docs/", "/" + DOCS_SITE_REL):
+                # trailing slash matters: docsify fetches `<page>.md` relative to the
+                # page URL, so the SPA must be served at /docs/html/
+                self.send_response(302)
+                self.send_header("Location", f"/{DOCS_SITE_REL}/")
+                self.end_headers()
+                return
             if path.startswith("/candidates/"):
                 canonical = "/principals/" + path.removeprefix("/candidates/")
                 if query:
@@ -1264,7 +1685,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         Routed to mcp_server.handle_request(). Returns the JSON-RPC response
         (or 202 with no body for notifications).
         """
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        if not self._require_auth(parsed):
+            return
+        path = parsed.path
         if path != "/mcp":
             self.send_response(404)
             self.end_headers()
@@ -1306,18 +1730,80 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def log_message(self, fmt, *args):
-        logging.info("%s - - %s", self.address_string(), fmt % args)
+        # Never log the token: the request line may carry ?token=...
+        message = _TOKEN_IN_QUERY.sub(r"\1REDACTED", fmt % args)
+        logging.info("%s - - %s", self.address_string(), message)
 
 
-def main():
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="LoveWork Dashboard Server")
     parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--host", default="0.0.0.0")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="bind address. Loopback by default; pass 0.0.0.0 for LAN access, "
+             "which requires a token.",
+    )
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="shared access token (falls back to $LOVEWORK_DASHBOARD_TOKEN). "
+             "Required for any non-loopback bind unless --no-auth is given.",
+    )
+    parser.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="disable authentication for this process (also $LOVEWORK_DASHBOARD_NO_AUTH=1). "
+             "This is the explicit consent that allows a non-loopback bind without a "
+             "token: internal R&D trial on the trusted home LAN only. Any exposure "
+             "beyond that LAN must use --token instead.",
+    )
+    return parser
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
+
+    # Refuse the dangerous configuration before opening a socket.
+    token = resolve_token(args.token)
+    no_auth = resolve_no_auth(args.no_auth)
+    if no_auth and token:
+        logging.warning(
+            "auth is disabled (--no-auth / $%s): the supplied token is IGNORED "
+            "and every route is served without credentials",
+            NO_AUTH_ENV,
+        )
+        token = None
+    refusal = bind_policy_error(args.host, token, no_auth=no_auth)
+    if refusal:
+        sys.stderr.write(refusal)
+        sys.stderr.flush()
+        logging.error("refusing to start: non-loopback bind %s without a token", args.host)
+        return 2
+    configure_auth(token)
+
+    lan_exposed = not is_loopback_host(args.host)
+    if no_auth:
+        logging.warning(
+            "AUTH DISABLED (--no-auth / $%s): every route on this process, including "
+            "POST /mcp and its run_python tool, is served without credentials",
+            NO_AUTH_ENV,
+        )
     server = HTTPServer((args.host, args.port), DashboardHandler)
-    logging.info("LoveWork dashboard listening on http://%s:%d", args.host, args.port)
+    # Effective URL a human can open: the wildcard addresses are not browsable.
+    url_host = "127.0.0.1" if args.host in {"0.0.0.0", "::", ""} else args.host
+    bind_desc = f"LAN-exposed ({args.host})" if lan_exposed else "loopback-only"
+    if no_auth and lan_exposed:
+        bind_desc += (" (internal trial) — any exposure beyond the trusted home LAN "
+                      "must use --token")
+    logging.info(
+        "LoveWork dashboard: http://%s:%d  auth=%s  bind=%s",
+        url_host, args.port,
+        "on" if token else "off",
+        bind_desc,
+    )
     logging.info("  wiki:    %s", WIKI)
     logging.info("  logs:    %s", LOGS)
     logging.info("  jobs.db: %s", JOBS_DB)
@@ -1326,7 +1812,8 @@ def main():
     except KeyboardInterrupt:
         logging.info("shutting down")
         server.shutdown()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,0 +1,15 @@
+# The LLM this principal's LoveWork calls — change it **here**, not in code.
+# How to change provider/model/key by hand, and the precedence: docs/49-llm-settings.md
+#
+# No secret belongs in this tracked file. `key_file` names a file (mode 600) and
+# `api_key_env` names an environment variable; a key pasted here would be committed.
+#
+# Precedence: host env `LOVEWORK_LLM_*` > this file > `lovework-agent/.env` defaults.
+provider: opencode-go
+base_url: https://opencode.ai/zen/go/v1
+model: deepseek-v4.1-flash
+reasoning_effort: max          # the relay's own vocabulary: low | high | max
+temperature: 0.3
+max_tokens: 131072
+# No `key_file`: the key is resolved from LOVEWORK_HOME/credentials/
+# opencode-go.key, so this file stays host-independent (2026-11-03).

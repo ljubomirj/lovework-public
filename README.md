@@ -35,6 +35,8 @@ already useful to discuss, test, and build upon.
   data.
 - [Synthetic example](examples/report.md) — what a future report could look
   like, using fictional data.
+- [The example principal](examples/nn/README.md) — a scrubbed, complete
+  profile (N.N.) and the verdicts it produced, with the live record withheld.
 
 ## How it works
 
@@ -54,10 +56,22 @@ from this documentation-first foundation toward a reusable engine.
 ## Prototype source
 
 The working Python engine is included in [`lovework-agent/`](lovework-agent/),
-along with source adapters, the dashboard/MCP surface, and its test suite. The
-bundled [`profiles/example/`](profiles/example/) is fictional and exists only
-to show the profile contract; active profiles, application records, crawl
-results, and decision ledgers remain private.
+along with source adapters and the dashboard/MCP surface. The bundled
+[`profiles/example/`](profiles/example/) is fictional and exists only to show
+the profile contract; active profiles, application records, crawl results, and
+decision ledgers remain private. The test suite is not part of this snapshot —
+it needs the private profile corpus, so it is withheld rather than published
+broken.
+
+## The example principal
+
+[`profiles/nn/`](profiles/nn/) is a real profile contract with the person
+renamed to N.N., the firms replaced by stable pseudonyms, and contact details
+replaced with `example.invalid`. Its biography, timeline and voice are kept so
+the example reads like a person rather than a schema, and
+[`examples/nn/index.md`](examples/nn/index.md) shows the verdicts a run
+produced. The live evidence behind those verdicts is withheld: see
+[PUBLICATION.md](PUBLICATION.md) for what is public and why.
 
 ```bash
 uv venv venv

@@ -1,48 +1,30 @@
-# Alex Example — Full Bio
+# Alex Example — Long Bio (Layer 1)
 
-> Longer version of the principal's background. Not loaded by default (token cost)
-> but available for deep context.
+> The full path, past → present. Read on demand: it is long and costs tokens,
+> so the matcher sees `cv-short.md` by default and reaches for this one when a
+> decision needs the whole story.
 
-[This is where you'd put your full bio — the longer version of your CV, with
-more detail on specific projects, papers, talks, side projects, etc. The matcher
-will use this when the soul + short CV aren't enough to make a confident
-decision.]
+## Present
 
-## Career Narrative
+Data scientist at Northwind Analytics (2021–), working on demand forecasting for
+retail supply chains: hierarchical time-series models, a backtesting harness that
+gates every release, and the service that serves the forecasts.
 
-I started in data science at a telecom, learned to write SQL and build
-dashboards. Then moved to ML engineering at a logistics startup, where I
-productionised my first real ML model. Now I'm at a SaaS company doing
-LLM-powered features, which is where I want to stay.
+## Before
 
-## Side Projects
+- **2018–2021 — Junior data scientist, Contoso Retail.** Pricing elasticity
+  models; the first production model I owned, including its monitoring.
+- **2016–2018 — Analyst, Fabrikam Insurance.** Claims triage reporting; moved the
+  reporting stack from Excel to Python because the reporting had outgrown it.
 
-- **llmbench** — a personal benchmarking tool for LLM APIs. Open source, ~200
-  GitHub stars. Tracks latency, cost, and quality across providers.
-- **dspy-cookbook** — a collection of DSPy patterns I've found useful. Open
-  source, ~80 stars.
+## Education
 
-## Talks
+- MSc Data Science, University of Leeds, 2016.
+- BSc Mathematics, University of Sheffield, 2014.
 
-- "Production LLM patterns" — PyCon DE 2024
-- "RAG is harder than you think" — Berlin AI meetup, 2024
+## What The Path Says
 
-## What I want in my next role
-
-A senior AI/ML engineering role at a product company. I want to own
-end-to-end systems, not just be a prompt engineer. I want to work with
-people smarter than me on hard problems. I want to learn about evals,
-agents, and the frontier of what's possible with LLMs.
-
-## What I don't want
-
-I've done the "junior data scientist churning out dashboards" thing. I've
-done the "ML engineer fixing production bugs" thing. I don't want to do
-either again. I want to be challenged.
-
-## Personal
-
-Based in Berlin. Originally from the Netherlands. EU citizen. Speak
-English, German, Dutch. Married, one kid.
-
-Hobbies: cycling, bread baking, reading ML papers on the weekend.
+Six years of making forecasts that somebody acts on. The move I want is toward
+the engineering side of that work — owning the pipeline and the serving path, not
+only the notebook — without leaving the domain where I can tell whether a model is
+actually good.

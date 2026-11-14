@@ -11,7 +11,8 @@ This module resolves the correct interpreter once (cached, env-overridable) and 
 one robust path to Gmail.
 
 Gmail is optional: if `google_api.py` is missing or not OAuth-authenticated, `run_gapi`
-returns None and callers gracefully no-op.
+returns None and callers gracefully no-op. An empty result set returns `[]` — callers
+must not treat "no mail" and "no Gmail" as the same thing.
 """
 
 import json
@@ -23,25 +24,40 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from hermes_context import resolve_hermes_home
+from hermes_context import hermes_home_or_none
 
 logger = logging.getLogger(__name__)
 
-# google_api.py lives in the Hermes google-workspace skill.
-# Resolve HERMES_HOME at runtime (env var first, then ~/.hermes symlink).
-def gapi_path() -> Path:
-    """Path to the Hermes google_api.py script.
+# google_api.py prints this for a successful but empty result set. It is plain
+# text, not JSON, so it must be mapped before the JSON decode: `[]` means "the
+# mailbox/search is genuinely empty", `None` means "Gmail could not be reached".
+EMPTY_RESULT_SENTINEL = "no messages found."
 
-    Checks the active profile's skills first, then falls back to the
-    root HERMES_HOME (supports profile-based setups where the google-
-    workspace skill lives in the root installation, not per-profile).
+# google_api.py is VENDORED into the repo (2026-10-20, decoupling plan A7):
+# `lovework-agent/google_api.py`, its one Hermes dependency removed (the token
+# path — it resolves LOVEWORK_GOOGLE_HOME / HERMES_HOME /
+# ~/.lovework/credentials/gmail itself). The skill copy stays as a fallback
+# only while the transition settles; LOVEWORK_GAPI_SCRIPT overrides both.
+def gapi_path() -> Path:
+    """Path to the google_api.py script: ours first, the skill as fallback.
+
+    Ours wins on existence, so a repo checkout works on a host with no Hermes
+    at all — the whole point of A7.
     """
-    hermes_home = resolve_hermes_home()
+    ours = Path(__file__).resolve().parent / "google_api.py"
+    if ours.is_file():
+        return ours
+    override = os.getenv("LOVEWORK_GAPI_SCRIPT", "").strip()
+    if override:
+        return Path(override)
+    hermes_home = hermes_home_or_none()
+    if hermes_home is None:
+        return ours                       # no Hermes anywhere: ours, absent or not
     gapi_script = hermes_home / "skills" / "productivity" / "google-workspace" / "scripts" / "google_api.py"
     if gapi_script.exists():
         return gapi_script
     # Fallback: check the parent of the profile's HERMES_HOME (root install)
-    # e.g. ~/.hermes-gigul2/skills/... when running under profiles/hermel/
+    # e.g. ~/.hermes-host-a/skills/... when running under profiles/profile-a/
     fallback = hermes_home.parent / "skills" / "productivity" \
         / "google-workspace" / "scripts" / "google_api.py"
     if not fallback.exists() and hermes_home.parent != hermes_home:
@@ -80,8 +96,8 @@ def gapi_python() -> str:
 
     for py in (
         os.getenv("LOVEWORK_GMAIL_PYTHON"),
-        "/usr/local/bin/python3",          # macOS: typically has the Google libs
-        sys.executable,
+        sys.executable,                    # the venv — has the Google libs since A7
+        "/usr/local/bin/python3",          # macOS: pre-A7 fallback
         shutil.which("python3") or "python3",
     ):
         if py and _has_google_libs(py):
@@ -96,16 +112,18 @@ def gapi_python() -> str:
 
 
 def run_gapi(*args, credential_home: Optional[Path] = None) -> Optional[object]:
-    """Run google_api.py with the resolved interpreter; return parsed JSON stdout or None.
+    """Run google_api.py with the resolved interpreter.
 
-    Returns None on any failure (script missing, non-zero exit, bad JSON, timeout) so
-    callers can treat Gmail as unavailable and degrade gracefully.
+    Returns parsed JSON stdout, `[]` for the helper's empty-result sentinel
+    ("No messages found."), or None when Gmail is unavailable (script missing,
+    non-zero exit, non-JSON output, timeout) so callers can degrade gracefully
+    without conflating "nothing to read" with "could not read".
     """
     # Selecting a profile-specific script is not enough: standalone skill
     # scripts resolve their token from $HERMES_HOME and otherwise default to
     # ~/.hermes (the root/default profile). Propagate LoveWork's resolved
     # profile so the script reads that profile's OAuth token too.
-    runtime_hermes_home = resolve_hermes_home()
+    runtime_hermes_home = hermes_home_or_none()
     script = gapi_path()
     if not script.exists():
         logger.debug(f"[gmail] google_api.py not found: {script}")
@@ -115,8 +133,19 @@ def run_gapi(*args, credential_home: Optional[Path] = None) -> Optional[object]:
     # mailbox credential may be elsewhere, so only the helper subprocess gets
     # its token home overridden. The parent LoveWork/Hermes runtime identity is
     # unchanged.
-    token_home = credential_home if credential_home is not None else runtime_hermes_home
-    env["HERMES_HOME"] = str(token_home)
+    # The token home, in the decoupling plan's order (A7): the principal's
+    # credential_home, then docs/15's target ~/.lovework/credentials/gmail,
+    # then — only while the transition settles — the Hermes profile home.
+    # Both env keys are set: our vendored script reads LOVEWORK_GOOGLE_HOME
+    # first; the skill-era fallback script still reads HERMES_HOME.
+    import config  # local: one authority for credential paths
+    default_home = config.GMAIL_CREDENTIALS_DIR
+    if not (default_home / "google_token.json").is_file():
+        default_home = runtime_hermes_home
+    token_home = credential_home if credential_home is not None else default_home
+    if token_home is not None:
+        env["LOVEWORK_GOOGLE_HOME"] = str(token_home)
+        env["HERMES_HOME"] = str(token_home)
     try:
         result = subprocess.run(
             [gapi_python(), str(script), *args],
@@ -128,7 +157,16 @@ def run_gapi(*args, credential_home: Optional[Path] = None) -> Optional[object]:
     if result.returncode != 0:
         logger.debug(f"[gmail] gapi non-zero ({args}): {result.stderr.strip()[:200]}")
         return None
+    stdout = result.stdout.strip()
+    # The helper prints this plain-text sentinel (not JSON) for a successful but
+    # empty result. Without this branch, an empty mailbox and a broken credential
+    # both surface as None: the ambiguity that hid a dead OAuth token from
+    # 2026-07-23 to 2026-09-10 and made "no mail today" indistinguishable from
+    # "Gmail is down" in every log line.
+    if stdout.lower() == EMPTY_RESULT_SENTINEL:
+        return []
     try:
         return json.loads(result.stdout)
     except json.JSONDecodeError:
+        logger.debug(f"[gmail] gapi non-JSON output ({args}): {stdout[:120]!r}")
         return None

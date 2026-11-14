@@ -1,38 +1,29 @@
-<!--
-  Layer 3 (branching possibilities): template.
-  Future principals should mirror this structure — one ## section per
-  direction, with an explicit "matcher signal:" line on each.
--->
+# Alex — Branching Possibilities (Layer 3)
 
-# Alex Example — Branching Possibilities
+> Where this could go from here, rooted at the present. Each branch ends with a
+> `matcher signal:` line; the matcher reads those as instructions, not prose, and
+> adds +1 when a role aligns with a branch (noting the branch letter).
 
-> The principal's *future branches* — directions worth pursuing, rooted at the
-> present with the past in view. Anonymised template; replace with the
-> principal's actual directions.
+## (a) ML engineer on a forecasting or pricing team
 
-### (a) AI/ML engineering — product company
+The shortest move from where I am: the same domain, the engineering half of the
+job — feature pipelines, retraining, serving, evaluation.
 
-Senior AI engineer at a product company shipping LLM-based features.
+**matcher signal:** GO for ML engineer roles at retailers, insurers or
+supply-chain companies; MAYBE for generic platform teams with no domain.
 
-**matcher signal:** GO for senior AI/ML engineer at EU product company; MAYBE
-for US-only or junior roles.
+## (b) Applied scientist in a research-adjacent team
 
-### (b) Founding engineer — early-stage AI startup
+Use the modelling background somewhere that prototypes and measures. Requires a
+team that values evaluation over novelty.
 
-Equity-heavy role at a <10-person AI startup.
+**matcher signal:** GO when the advert names forecasting, causal inference or
+time series; DROP when it is LLM research with no evaluation component.
 
-**matcher signal:** GO for founding-engineer at EU AI startup; FLAG for roles
-with no salary at unknown-stage startups.
+## (c) Analytics leadership, later
 
-### (c) AI in healthcare — domain interest
+A path in three to five years, not now: leading a small analytics team. Worth
+recording because it changes what "senior" means in a role description.
 
-**+ve:** sector the principal wants to grow into.
-**−ve:** no prior healthcare experience.
-
-**matcher signal:** MAYBE for ML/AI roles at healthcare startups (extra weight
-given the explicit interest); DROP for clinical-only or regulatory roles.
-
-## Stance / context for the matcher
-
-- Senior IC track; not management.
-- EU-based or explicit global-remote only.
+**matcher signal:** MAYBE for senior titles that stay hands-on; DROP for pure
+people-management roles at this stage.

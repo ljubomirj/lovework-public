@@ -13,7 +13,7 @@ import os
 import socket
 from pathlib import Path
 
-HOST_PROFILES = {"gigul2": "hermel", "macbook2": "hermeo"}
+HOST_PROFILES = {"host-a": "profile-a", "host-b": "profile-b"}
 
 
 def resolve_hermes_home() -> Path:
@@ -57,7 +57,39 @@ def profile_name(home: Path | None = None) -> str:
     return resolved.name
 
 
+def hermes_home_or_none() -> Path | None:
+    """The Hermes profile home if one resolves, else None — never raises.
+
+    Decoupling plan A5 (2026-10-21): Hermes is optional. `resolve_hermes_home`
+    keeps its contract (a caller that *needs* a profile gets an error that
+    names the fix); every LoveWork caller that merely *prefers* one — the
+    report header, the notifier's legacy token home, the dashboard's
+    schedule view — asks this instead, and degrades to the crontab runtime.
+    """
+    try:
+        home = resolve_hermes_home()
+    except (RuntimeError, OSError):
+        return None
+    return home if home.is_dir() else None
+
+
+def runtime_identity() -> str:
+    """Who ran this: the crontab job (post-severance) or the Hermes profile.
+
+    `LOVEWORK_JOB` is set by every launcher in `scripts/cron/`; with it the
+    identity line no longer needs Hermes at all.
+    """
+    job = os.environ.get("LOVEWORK_JOB", "").strip()
+    home = hermes_home_or_none()
+    if job and home is None:
+        return f"crontab job: {job}"
+    if job and home is not None:
+        return f"crontab job: {job} (Hermes profile {home.name} present)"
+    if home is not None:
+        return f"Hermes profile: {home.name} ({home})"
+    return "no scheduler context (direct invocation)"
+
+
 def identity_line() -> str:
     """Human-readable runtime identity suitable for logs and messages."""
-    home = resolve_hermes_home()
-    return f"Hermes profile: {profile_name(home)} ({home})"
+    return runtime_identity()

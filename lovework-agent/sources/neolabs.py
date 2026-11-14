@@ -9,20 +9,36 @@ from pathlib import Path
 from typing import List
 
 import config
-from crawler import SmartCrawler
+from crawler import SmartCrawler, job_evidence_text
 from job_registry import JobRegistry
 from matcher import JobMatcher
 from wiki_store import WikiEntry, match_fields
 
 logger = logging.getLogger(__name__)
 
-TRACKER_PATH = config.NEOLAB_TRACKER
-
 
 class NeolabsSource:
-    """Crawls neolabs from the local tracker file."""
+    #: This source's tier, declared here and nowhere else
+    #: (docs/28 §WP3b box 1). Primary = the hiring party's own
+    #: publication; secondary = someone relaying it.
+    primary = False
+    #: Set when the run enumerated its *whole* scope (no truncation,
+    #: caps or failures). Only then may absence become
+    #: `not_listed_in_scope` rather than `disappeared`.
+    complete_scope = False
+    """Crawls a local tracker-list file (neolabs, neoclouds, …) for job openings.
+
+    Subclasses override `name`, `tracker_path` and `goal`; the parser and the run
+    loop are shared so every tracker file uses exactly one format.
+    """
 
     name = "neolabs"
+    tracker_path = config.NEOLAB_TRACKER
+    goal = (
+        "Find open positions at this frontier AI lab / startup. "
+        "Look for: research scientist, research engineer, ML engineer, "
+        "founding engineer, applied scientist, or similar technical roles."
+    )
 
     def __init__(self, crawler: SmartCrawler, matcher: JobMatcher, registry: JobRegistry = None):
         self.crawler = crawler
@@ -30,13 +46,14 @@ class NeolabsSource:
         self.registry = registry
 
     def _parse_tracker(self) -> List[dict]:
-        """Parse the neolab tracker txt into org dicts."""
+        """Parse the tracker txt into org dicts."""
         orgs = []
-        if not TRACKER_PATH.exists():
-            logger.warning(f"Tracker file not found: {TRACKER_PATH}")
+        tracker = Path(self.tracker_path)
+        if not tracker.exists():
+            logger.warning(f"Tracker file not found: {tracker}")
             return orgs
 
-        text = TRACKER_PATH.read_text(encoding="utf-8")
+        text = tracker.read_text(encoding="utf-8")
         lines = text.splitlines()
         current = None
 
@@ -66,7 +83,7 @@ class NeolabsSource:
         if current is not None:
             orgs.append(current)
 
-        logger.info(f"Parsed {len(orgs)} orgs from neolab tracker")
+        logger.info(f"Parsed {len(orgs)} orgs from {self.name} tracker")
         return orgs
 
     def run(self) -> List[WikiEntry]:
@@ -85,11 +102,7 @@ class NeolabsSource:
                 jobs = self.crawler.crawl_org(
                     org_name=org_name,
                     seed_urls=urls,
-                    goal=(
-                        "Find open positions at this frontier AI lab / startup. "
-                        "Look for: research scientist, research engineer, ML engineer, "
-                        "founding engineer, applied scientist, or similar technical roles."
-                    ),
+                    goal=self.goal,
                 )
                 for job in jobs:
                     record = None
@@ -103,18 +116,13 @@ class NeolabsSource:
                                 source=self.name,
                             )
                         except Exception as e:
-                            logger.debug(f"Registry upsert failed: {e}")
+                            # A swallowed upsert is data loss, and the exception type is
+                            # what separates contract drift from a transient failure
+                            # (LEARNINGS 2026-09-20).
+                            logger.warning(f"Registry upsert failed "
+                                           f"({type(e).__name__}): {e}")
 
-                    desc = " ".join(
-                        filter(
-                            None,
-                            [
-                                job.description_snippet,
-                                job.requirements_snippet,
-                                job.employment_type,
-                            ],
-                        )
-                    )
+                    desc = job_evidence_text(job)
                     match = self.matcher.match(
                         job.title, desc, org_name, job_url=job.url or "",
                         location=job.location or "",

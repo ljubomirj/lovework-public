@@ -1,0 +1,14 @@
+- name: agentic-engineer-london
+  filters:
+    keywords: agentic engineer
+    location: London
+- name: ai-ml-engineer-london
+  filters:
+    role: AI Engineer
+    location: London
+- name: python-llm-remote
+  filters:
+    skills:
+    - Python
+    - LLM
+    remote: true

@@ -13,11 +13,19 @@ import argparse
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from config import CACHE_DIR
+from git_context import describe as describe_git
+
+#: Every outer-operation kind (crawl_operation.py's `mode`) that may own a run
+#: record. Kept here as the one authority: the crawl CLI validates against it,
+#: and a run launched by the wrapper records its type verbatim. When the two
+#: lists drifted, `lovework-crawl.sh reassess …` died at startup with
+#: "invalid choice: 'reassess'" before the operation began (2026-09-21).
+RUN_TYPES: tuple[str, ...] = ("full", "incremental", "replay", "reassess", "consume")
 
 RUNS_DIR = CACHE_DIR / "runs"
 
@@ -25,6 +33,31 @@ RUNS_DIR = CACHE_DIR / "runs"
 def utc_now() -> str:
     """Return an ISO-8601 UTC timestamp suitable for durable evidence."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def local_date_of(stamp: str) -> Optional[date]:
+    """The **local** calendar date of a stamped instant — one clock for day maths.
+
+    Every durable stamp here is UTC, and every day-length decision is local
+    (`date.today()`, the principal's day). Reading the first ten characters of a UTC
+    stamp as if they were a local date makes the two disagree for the hour after local
+    midnight whenever the offset is positive: a review written at 00:30 BST stamps
+    `…-19T23:30Z` and reads, to day arithmetic, as *yesterday* (2026-10-20, measured —
+    three tests failed at 00:0x local and nowhere else).
+
+    Naive stamps are taken at face value; an unparseable one returns None and the
+    caller decides (rather than silently treating it as today).
+    """
+    raw = str(stamp or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.date()
+    return parsed.astimezone().date()
 
 
 def _safe_run_id(run_id: str) -> str:
@@ -90,6 +123,9 @@ def start_run(
         "pid": pid,
         "log_file": log_file,
         "report_file": None,
+        # Which checkout produced this run: branch, HEAD, dirty state, recent
+        # commits. Best-effort (never raises) — see git_context.
+        "git": describe_git(),
         "notification": {
             "status": "pending",
             "provider": None,
@@ -137,13 +173,23 @@ def record_notification(
     message_id: str | None = None,
     error: str | None = None,
     attempted_at: str | None = None,
+    reason: str | None = None,
     runs_dir: Path = RUNS_DIR,
 ) -> dict[str, Any]:
-    """Persist the notification result and its delivery evidence."""
-    if status not in {"sent", "failed"}:
-        raise ValueError("notification status must be 'sent' or 'failed'")
+    """Persist the notification result and its delivery evidence.
+
+    `suppressed` is the third terminal state: the run deliberately sent no
+    email, and says why (LJ, 2026-10-18: post-crawl emails retired — the
+    Monday state email carries the state instead). It is *not* a failure and
+    *not* a delivery: it carries no message_id, so a reader cannot mistake it
+    for one, and the watchdog accepts it without waking the investigator.
+    """
+    if status not in {"sent", "failed", "suppressed"}:
+        raise ValueError("notification status must be 'sent', 'failed' or 'suppressed'")
     if status == "sent" and not message_id:
         raise ValueError("a sent notification requires a Gmail message_id")
+    if status == "suppressed" and not reason:
+        raise ValueError("a suppressed notification must record a reason")
     record = load_run(run_id, runs_dir)
     record["notification"] = {
         "status": status,
@@ -151,6 +197,7 @@ def record_notification(
         "message_id": message_id,
         "attempted_at": attempted_at or utc_now(),
         "error": error,
+        "reason": reason,
     }
     _atomic_write(run_path(run_id, runs_dir), record)
     return record
@@ -178,7 +225,7 @@ def _main() -> int:
 
     start = subparsers.add_parser("start")
     start.add_argument("--run-id", required=True)
-    start.add_argument("--run-type", required=True, choices=("full", "incremental"))
+    start.add_argument("--run-type", required=True, choices=RUN_TYPES)
     start.add_argument("--profile", required=True)
     start.add_argument("--hermes-home", required=True)
     start.add_argument("--log-file", required=True)
@@ -201,7 +248,10 @@ def _main() -> int:
 
     notification = subparsers.add_parser("notification")
     notification.add_argument("--run-id", required=True)
-    notification.add_argument("--status", required=True, choices=("sent", "failed"))
+    notification.add_argument("--status", required=True,
+                              choices=("sent", "failed", "suppressed"))
+    notification.add_argument("--reason",
+                              help="why no email was sent (required for --status suppressed)")
     notification.add_argument("--provider", required=True)
     notification.add_argument("--message-id")
     notification.add_argument("--error")
@@ -240,6 +290,7 @@ def _main() -> int:
             message_id=args.message_id,
             error=args.error,
             attempted_at=args.attempted_at,
+            reason=getattr(args, "reason", None),
             runs_dir=args.runs_dir,
         )
     print(json.dumps(result, sort_keys=True))

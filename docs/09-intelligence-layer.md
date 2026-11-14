@@ -242,3 +242,17 @@ The crawler feeds the system. The LLM speaks for the system. The agent drives
 the system. But the product is the longitudinal intelligence layer: a faithful
 persona simulator, calibrated by feedback, making better and better judgments
 about what work this person should pursue.
+
+## The longitudinal contract (2026-09-13 design refinement)
+
+The learning loop needs a recoverable chain: captured evidence → identity and
+timeline → temporal view → judgment → authorized action → evaluated outcome.
+Every new reaction, receipt and experiment result enters the evidence base;
+policy changes are versioned inputs to the next run. Summaries and model
+inferences never become unqualified truth merely by being stored.
+
+[Chapter 26](26-asof-strata-history.md) defines capture and the difference
+between recorded output, historical knowledge and counterfactual judgment.
+[Chapter 27](27-agent-ergonomics.md) defines how an agent navigates that chain,
+chooses the cheapest useful action and retains tested lessons. Together these
+contracts precede choosing a new agent framework or building the simulator.

@@ -23,17 +23,31 @@ the corresponding D# entry in [`../DECISIONS.md`](../DECISIONS.md).
 | **D11** | **HN Algolia API** for both HN sources | No auth, no rate-limit pain, clean JSON. HTML parsing only for /jobs (which the API doesn't cover). |
 | **D12** | **Per-entry re-crawl cadence** in `company_pages.yaml` | A single global cadence is wrong — past employers warrant fortnightly, YC AI companies monthly, watchlist weekly. Decision at cron time, persisted in the same YAML. |
 | **D13** | **Lead → case** with `YYYYMMDD-Company-Role` slug | Mirrors LJ's existing `applications/` convention; slots into the workflow without a second naming scheme. |
-| **D14** | **Org-level re-apply cooldown** (18 months, configurable) | Same-role cooldown misses "different team, same company". The org-level kill closes that door for N months after *any* rejection at the org. |
+| **D14** | **Org-level re-apply cooldown** (9 months, configurable; was 18 until 2026-10-18) | Same-role cooldown misses "different team, same company". The org-level kill closes that door for N months after *any* rejection at the org. Retuned with its sibling: same-role 12 months, org-level 9 — a rejection of *that* role is direct evidence, a rejection elsewhere in the org is not. |
 | **D15** | **Two-layer manuals** (`MANUAL.md` + `DECISIONS.md` + skills) | Operational state (regenerated) separate from architectural rationale (changes only on a deliberate decision). One file for the agent's first read, the other for context. |
 | **D16** | **Single canonical skill + per-agent symlinks** | Multiple agents each look for SKILL.md in their own path. One canonical home + symlinks stops the copies drifting. |
 | **D17** | **3-layer profile model** (long path / tip / branching possibilities) | The flat profile described past + present but not *where the principal is going*. Layer 3 carries explicit `matcher signal:` lines so the scorer weights future-direction roles correctly. **D17-amend:** no symlinks in profiles — they don't version cleanly in the double-git workflow; all CV files are plain copies. KJ/VJ/PK built out on the same model. |
 | **D18** | **Dashboard + MCP server merged** (one process, two faces) | DECISIONS D5 called for an MCP server; the dashboard already runs as a small Python web server reading live state. Merging delivers D5 without a second process fighting over the registry. HTTP transport, no SDK dep, 9 tools. |
 
+### Post-D18 additions (2026-09)
+
+- **Cross-principal source ownership** (`profiles/<p>/sources.yaml` → `consumes`,
+  implemented by `consume.py`): fetching a shared source happens once, on the
+  owner's crawl; scoring stays per principal. The owner's state is read-only and
+  the owner keeps lifecycle ownership. KJ consumes `research_orgs`, `neolabs`
+  and `hf_startups` from LJ. See [chapter 02](02-architecture.md) and
+  [chapter 04](04-sources.md). Noted here rather than as a numbered decision
+  because `docs/22` reserves the next number (D19) for the Hermes-strategy
+  decision.
+- **Digital Jobs is per-principal** (`profiles/<p>/digitaljobs_searches.yaml`):
+  LJ and VJ have their own query lists; a principal with no list is skipped
+  rather than handed another's queries.
+
 ## Where the decisions live
 
 - **Full-length rationale:** [`../DECISIONS.md`](../DECISIONS.md) — append-only, the source of truth.
 - **Operator-facing summary:** [`../MANUAL.md`](../MANUAL.md) (regenerated).
-- **Agent-facing bootstrap:** [`../agents/skills/lovework/SKILL.md`](../agents/skills/lovework/SKILL.md).
+- **Agent-facing bootstrap:** [`../agents/skills/lovework-hydrate/SKILL.md`](../agents/skills/lovework-hydrate/SKILL.md).
 
 When a decision changes, update `DECISIONS.md` (the canonical), then propagate
 to MANUAL/SKILL via `build_manual.py` / `sync_skills.sh`. This chapter is a
@@ -73,7 +87,7 @@ condensation; do not edit it to override a decision — edit `DECISIONS.md`.
 ## Predecessors (archived, not deleted — D8)
 
 LoveWork is the second-generation. The two predecessors live untouched in
-`~/LJ-work-2026/` for safe rollback:
+`~/applications/` for safe rollback:
 
 - **`work-like/`** — the merge basis. Has the agent loop, 8 tools, DSPy
   signatures, sandbox, and tests. `work-like-agent/` was copied to

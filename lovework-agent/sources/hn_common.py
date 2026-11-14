@@ -26,7 +26,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
-from lead_identity import is_implausible_header
+from lead_identity import is_implausible_header, is_noise_title
 
 logger = logging.getLogger(__name__)
 
@@ -258,6 +258,28 @@ def _comment_date(comment: dict) -> str:
         return ""
 
 
+_COMPANY_PAREN_SITE_RE = re.compile(
+    r"\s*\((?P<site>https?://[^)\s]+|[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^)\s]*)?)\)\s*$")
+
+
+def _clean_company(raw: str) -> Tuple[str, Optional[str]]:
+    """Strip a trailing parenthesised site from the company segment.
+
+    The HN header convention is "Company (site) | Role | Location" — the
+    2026-10-07 wiki audit found 130+ org pages named "Smarkets
+    (https://www.smarkets.com)", "Ambito (ambito.io)" and kin across all
+    three principals, every sweep. The site is returned as a URL hint so
+    it can still seed the advert link when nothing better exists.
+    """
+    m = _COMPANY_PAREN_SITE_RE.search(raw or "")
+    if not m:
+        return (raw or "").strip(), None
+    site = m.group("site").strip()
+    if not site.startswith("http"):
+        site = "https://" + site
+    return (raw[:m.start()] or "").strip(), site
+
+
 def parse_hn_job_comment(comment: dict) -> Optional[dict]:
     """Parse a single HN job-post comment into {company, role, location, url, body}.
 
@@ -310,9 +332,19 @@ def parse_hn_job_comment(comment: dict) -> Optional[dict]:
     if not header:
         return None
 
-    company = header[0]
-    role = header[1] if len(header) > 1 else ""
-    location = header[2] if len(header) > 2 else ""
+    company, url_hint = _clean_company(header[0])
+    fields = list(header[1:])
+    # HN headers are positional ("Company | Role | Location | …") but posters
+    # write them freely, and field 2 is often the employment type or a remote
+    # token: "PostHog (…posthog.com/careers) | Full-Time | Product engineers,
+    # Technical CSMs" was read as role="Full-Time", location="Product
+    # engineers, …" (2026-10-07 audit; still produced on the 2026-10-04 vj/kj
+    # sweeps). Shift past a non-role field rather than dropping the lead:
+    # "Acme Ltd | REMOTE (UTC -3 to +3) | Senior Engineer" is a real advert.
+    while fields and is_noise_title(fields[0]):
+        fields.pop(0)
+    role = fields[0] if fields else ""
+    location = fields[1] if len(fields) > 1 else ""
 
     # P2 — identity integrity: a long prose sentence is a mis-split
     # description (e.g. an em-dash inside a paragraph), not a header.
@@ -326,6 +358,8 @@ def parse_hn_job_comment(comment: dict) -> Optional[dict]:
         if part.startswith("http"):
             url = part
             break
+    if not url and url_hint:
+        url = url_hint
     if not url:
         url = _find_url_in_text("\n".join(lines[body_start:]))
 
@@ -342,6 +376,10 @@ def parse_hn_job_comment(comment: dict) -> Optional[dict]:
         "hn_comment_id": comment.get("objectID") or comment.get("id"),
         "hn_author": comment.get("author") or comment.get("by", ""),
         "discovery_date": _comment_date(comment),
+        # In an HN hiring thread the comment *is* the advert, so the
+        # comment's created_at is a real posting date — the only true age
+        # signal any source gives us (docs/28 §WP3a).
+        "posted_at": _comment_date(comment),
     }
 
 

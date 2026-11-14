@@ -20,7 +20,7 @@ This document covers:
 
 **LoveWork** is the mission. **LoveWork** is the product.
 
-> *Work that you love, so you never work a day in your life.*
+> *Work what you love and love your work.*
 
 All humans are capable of this. Only they don't discover enough — or they run out of time.
 We are on a mission to speed that up 1000×. Humans are built to do work they love.
@@ -117,7 +117,7 @@ resp = client.chat.completions.create(
     model="deepseek-chat",
     messages=[{"role": "user", "content": "..."}],
     temperature=0.3,
-    max_tokens=4096,           # 8192 for extraction
+    max_tokens=config.LLM_MAX_TOKENS,   # a generous ceiling (131072): the model stops when done
     response_format={"type": "json_object"},   # for structured()
 )
 content = resp.choices[0].message.content
@@ -176,7 +176,7 @@ Because it lets us swap providers without code changes:
 **Input:** Same as 4.1
 **Output:** `List[ExtractedJob]` with title, team, location, url, snippets, etc.
 
-**Called:** ~2 pages per org × ~100 orgs = **~200 calls/run**. `max_tokens=8192`.
+**Called:** ~2 pages per org × ~100 orgs = **~200 calls/run**. Budget: `config.LLM_MAX_TOKENS` (a generous ceiling — the model stops when the list is written).
 
 **DSPy equivalent:** `dspy_signatures.ExtractJobs` + `SmartCrawlerDSPy.extract_jobs`
 
@@ -401,7 +401,7 @@ works for server-rendered pages.
 **File:** `history.py:scan_gmail()`
 
 ```python
-gapi = Path.home() / ".hermes-macbook2/skills/productivity/google-workspace/scripts/google_api.py"
+gapi = Path.home() / ".hermes-host-b/skills/productivity/google-workspace/scripts/google_api.py"
 subprocess.run(["python3", str(gapi), "gmail", "search", query, "--max", "10"])
 ```
 
@@ -422,15 +422,15 @@ Parses the dir name (date + company + role), reads the `.txt` file looking for r
 
 ## 9. Per-run LLM cost
 
-At DeepSeek pricing (~$0.14/M input, $0.28/M output), per full run:
-- ~500 calls × ~2K input + ~500 output = ~1M input + ~250K output
-- **~$0.15 per run**
-- 3 runs/week = **~$0.45/week** = **~$2/month**
+**Measured** (2026-09-06/09-12 LJ full sweeps — `docs/30-inference-chain-and-data-map.md` §4):
+- 1,855–2,113 calls (1,673 match · 149 decision · 33 extract), ≈ 20.4M input + 1.08M output tokens
+- **≈ $3.7 per full crawl** at DeepSeek off-peak list ($0.15/M in, $0.60/M out) → 4 crawls/month ≈ **$15/principal/month**
+- The older "~650 calls × ~2K input → ~$0.15 per run" figure (an estimate in an earlier revision of this section) was ~3× low on calls.
 
-At OpenAI o3 pricing (~$10/M input, $40/M output):
-- Same volume: ~$10 + ~$10 = **~$20 per run** = **~$240/month**
+For an order-of-magnitude comparison at frontier pricing: the same token volume on
+a ~$10/M-input, ~$40/M-output model lands in the **~$250 per crawl** range.
 
-**Recommendation:** Default to DeepSeek for autonomous mode (cheap), use a stronger model
+**Recommendation:** Default to a cheap relay for autonomous mode; use a stronger model
 (Claude, o3) for interactive mode when the user is asking nuanced questions.
 
 ---
@@ -483,7 +483,7 @@ The DSPy signatures are unoptimised. With a metric and a labelled set, we can:
 ### 11.4 Hosting & consulting
 
 If open-sourced:
-- `ljubomir/lovework` on GitHub (or whatever name we settle on)
+- `user/lovework` on GitHub (or whatever name we settle on)
 - `pip install lovework` on PyPI
 - **Hosted service** — managed cron, hosted LLM proxy, dashboard, $20-50/mo per principal
 - **Profile consulting** — help principals write their `soul.md` (the art is in the profile)

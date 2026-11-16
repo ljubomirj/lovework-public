@@ -169,9 +169,9 @@ derived from.
 
 | Principal | Data |
 |---|---|
-| lj | [`lovework-principal-example/knowledge/`](../lovework-principal-example/knowledge/) — 523 cases, 2,976 lessons, 967 guidance rows |
-| vj | [`lovework-principal-vj/knowledge/`](../lovework-principal-vj/knowledge/) — 109 cases, 397 lessons |
-| kj | [`lovework-principal-kj/knowledge/`](../lovework-principal-kj/knowledge/) — 37 cases, 121 lessons |
+| lj | `lovework-principal-example/knowledge/` — 523 cases, 2,976 lessons, 967 guidance rows |
+| vj | `lovework-principal-vj/knowledge/` — 109 cases, 397 lessons |
+| kj | `lovework-principal-kj/knowledge/` — 37 cases, 121 lessons |
 
 Each holds `cases.jsonl`, `lessons.jsonl`, `guidance.jsonl` (where the principal
 stated one) and `outcomes.jsonl`, with a `README.md` and `stats.json`. The

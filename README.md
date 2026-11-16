@@ -35,8 +35,9 @@ already useful to discuss, test, and build upon.
   data.
 - [Synthetic example](examples/report.md) — what a future report could look
   like, using fictional data.
-- [The example principal](examples/nn/README.md) — a scrubbed, complete
-  profile (N.N.) and the verdicts it produced, with the live record withheld.
+- **The example principal** — [`examples/nn/`](examples/nn/) (in the public repository): a
+  scrubbed, complete profile (N.N.) and the verdicts it produced, with the live
+  record withheld.
 
 ## How it works
 
@@ -65,13 +66,13 @@ broken.
 
 ## The example principal
 
-[`profiles/nn/`](profiles/nn/) is a real profile contract with the person
-renamed to N.N., the firms replaced by stable pseudonyms, and contact details
-replaced with `example.invalid`. Its biography, timeline and voice are kept so
-the example reads like a person rather than a schema, and
-[`examples/nn/index.md`](examples/nn/index.md) shows the verdicts a run
-produced. The live evidence behind those verdicts is withheld: see
-[PUBLICATION.md](PUBLICATION.md) for what is public and why.
+[`profiles/nn/`](profiles/nn/) (in the public repository) is a real profile contract with the
+person renamed to N.N., the firms replaced by stable pseudonyms, and contact
+details replaced with `example.invalid`. Its biography, timeline and voice are
+kept so the example reads like a person rather than a schema, and
+[`examples/nn/index.md`](examples/nn/index.md) shows the verdicts a run produced. The live evidence
+behind those verdicts is withheld: see [PUBLICATION.md](PUBLICATION.md) for what is public and
+why.
 
 ```bash
 uv venv venv
